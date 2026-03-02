@@ -85,6 +85,22 @@
 
   .site-header nav a:hover { color: var(--accent); }
 
+  .github-star {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: var(--ink);
+    color: var(--paper) !important;
+    padding: 0.3rem 0.8rem;
+    border-radius: 4px;
+    font-size: 0.78rem;
+    font-family: 'JetBrains Mono', monospace;
+    text-decoration: none !important;
+    transition: background 0.15s;
+  }
+  .github-star:hover { background: var(--accent) !important; color: var(--paper) !important; }
+  .github-star svg { flex-shrink: 0; }
+
   /* ── HERO ─────────────────────────────────────────────────────── */
   .hero {
     max-width: 860px;
@@ -634,6 +650,10 @@
     <a href="#transactions">Transactions</a>
     <a href="#concurrency">Concurrency</a>
     <a href="#wal">WAL</a>
+    <a href="https://github.com/hash-anu/snkv" target="_blank" rel="noopener" class="github-star">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      Star on GitHub
+    </a>
   </nav>
 </header>
 
@@ -1674,6 +1694,18 @@ File size timeline:
     <div class="footer-block-title">Further reading</div>
     <p>
       SQLite WAL mode documentation · <code>btree.h</code> and <code>btreeInt.h</code> · <code>pager.c</code> journal and sync modes · <code>sqlite3_mutex</code> portability layer · <code>SQLITE_CHECKPOINT_*</code> modes in the SQLite C API reference.
+    </p>
+  </div>
+  <div class="footer-block">
+    <div class="footer-block-title">Open source</div>
+    <p>
+      SNKV is open source under the Apache 2.0 license. If you found this useful, a star on GitHub helps others discover the project.
+    </p>
+    <p style="margin-top:0.75rem;">
+      <a href="https://github.com/hash-anu/snkv" target="_blank" rel="noopener" class="github-star">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        Star on GitHub
+      </a>
     </p>
   </div>
 </footer>
