@@ -18,6 +18,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up QEMU (for Linux aarch64 cross-build)
+        if: runner.os == 'Linux'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: aarch64
+
       - name: Generate snkv.h (Linux and macOS)
         if: runner.os != 'Windows'
         run: make snkv.h && cp snkv.h python/
