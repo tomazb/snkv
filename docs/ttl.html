@@ -1,0 +1,1118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TTL Without a Background Thread — How SNKV Implements Per-Key Expiry</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=JetBrains+Mono:wght@300;400;500&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink:       #0f0f0f;
+    --ink-2:     #2a2a2a;
+    --ink-3:     #4a4a4a;
+    --ink-4:     #767676;
+    --paper:     #f9f7f4;
+    --paper-2:   #f1ede8;
+    --paper-3:   #e6e0d8;
+    --accent:    #c8401a;
+    --accent-2:  #e85d35;
+    --code-bg:   #13100e;
+    --code-fg:   #e8ddd0;
+    --code-com:  #7a6a58;
+    --code-key:  #e0845a;
+    --code-str:  #8ab87a;
+    --code-num:  #7aabd4;
+    --divider:   #d4cdc4;
+    --rule:      1px solid var(--divider);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { font-size: 17px; scroll-behavior: smooth; }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'Lora', Georgia, serif;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── SITE HEADER ───────────────────────────────────────────────── */
+  .site-header {
+    border-bottom: var(--rule);
+    padding: 0 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 56px;
+    position: sticky;
+    top: 0;
+    background: var(--paper);
+    z-index: 100;
+    backdrop-filter: blur(4px);
+  }
+
+  .site-header .logo {
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 500;
+    font-size: 0.95rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink);
+    text-decoration: none;
+  }
+
+  .site-header .logo span { color: var(--accent); }
+
+  .site-header nav {
+    display: flex;
+    gap: 2rem;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.82rem;
+    font-weight: 400;
+    color: var(--ink-3);
+  }
+
+  .site-header nav a {
+    color: inherit;
+    text-decoration: none;
+    letter-spacing: 0.04em;
+    transition: color 0.15s;
+  }
+
+  .site-header nav a:hover { color: var(--accent); }
+
+  .github-star {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: var(--ink);
+    color: var(--paper) !important;
+    padding: 0.3rem 0.8rem;
+    border-radius: 4px;
+    font-size: 0.78rem;
+    font-family: 'JetBrains Mono', monospace;
+    text-decoration: none !important;
+    transition: background 0.15s;
+  }
+  .github-star:hover { background: var(--accent) !important; color: var(--paper) !important; }
+  .github-star svg { flex-shrink: 0; }
+
+  /* ── HERO ─────────────────────────────────────────────────────── */
+  .hero {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 5rem 2rem 2.5rem;
+    border-bottom: var(--rule);
+  }
+
+  .hero .category {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .hero .category::before {
+    content: '';
+    display: block;
+    width: 20px;
+    height: 1px;
+    background: var(--accent);
+  }
+
+  .hero h1 {
+    font-family: 'Lora', serif;
+    font-size: clamp(2rem, 4.5vw, 3.2rem);
+    font-weight: 700;
+    line-height: 1.18;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+    margin-bottom: 1.5rem;
+    max-width: 720px;
+  }
+
+  .hero .subtitle {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 1.1rem;
+    color: var(--ink-3);
+    font-weight: 300;
+    line-height: 1.6;
+    max-width: 620px;
+    margin-bottom: 2.5rem;
+  }
+
+  .meta-row {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.82rem;
+    color: var(--ink-4);
+  }
+
+  .meta-row .sep { color: var(--divider); }
+
+  .meta-row .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    background: var(--paper-2);
+    border: var(--rule);
+    border-radius: 2px;
+    padding: 0.15rem 0.55rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  /* ── LAYOUT ─────────────────────────────────────────────────────── */
+  .content-wrap {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    max-width: 1100px;
+    margin: 0 auto;
+    gap: 0;
+  }
+
+  /* ── SIDEBAR TOC ──────────────────────────────────────────────── */
+  .toc {
+    position: sticky;
+    top: 56px;
+    height: calc(100vh - 56px);
+    overflow-y: auto;
+    padding: 2.5rem 1.5rem 2.5rem 2rem;
+    border-right: var(--rule);
+    font-family: 'DM Sans', sans-serif;
+  }
+
+  .toc-title {
+    font-size: 0.68rem;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-4);
+    margin-bottom: 1.2rem;
+    padding-bottom: 0.6rem;
+    border-bottom: var(--rule);
+  }
+
+  .toc ul { list-style: none; }
+  .toc li { margin-bottom: 0.1rem; }
+
+  .toc a {
+    display: block;
+    font-size: 0.78rem;
+    color: var(--ink-3);
+    text-decoration: none;
+    padding: 0.3rem 0.5rem;
+    border-radius: 3px;
+    line-height: 1.4;
+    transition: all 0.15s;
+    border-left: 2px solid transparent;
+  }
+
+  .toc a:hover, .toc a.active {
+    color: var(--accent);
+    background: var(--paper-2);
+    border-left-color: var(--accent);
+  }
+
+  .toc .toc-sub {
+    padding-left: 1rem;
+    margin-top: 0.1rem;
+  }
+
+  .toc .toc-sub a {
+    font-size: 0.73rem;
+    color: var(--ink-4);
+  }
+
+  /* ── ARTICLE BODY ────────────────────────────────────────────── */
+  .article {
+    padding: 3rem 3rem 6rem 3.5rem;
+    min-width: 0;
+  }
+
+  .section { margin-bottom: 4rem; }
+
+  .section-label {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--paper-3);
+  }
+
+  h2 {
+    font-family: 'Lora', serif;
+    font-size: 1.65rem;
+    font-weight: 700;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+    margin-bottom: 1rem;
+    scroll-margin-top: 80px;
+  }
+
+  h3 {
+    font-family: 'Lora', serif;
+    font-size: 1.15rem;
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--ink);
+    margin: 2rem 0 0.75rem;
+    scroll-margin-top: 80px;
+  }
+
+  h4 {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.85rem;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 1.75rem 0 0.6rem;
+  }
+
+  p {
+    color: var(--ink-2);
+    margin-bottom: 1.1rem;
+    font-size: 1rem;
+  }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.82em;
+    background: var(--paper-2);
+    border: var(--rule);
+    border-radius: 3px;
+    padding: 0.1em 0.35em;
+    color: var(--accent);
+  }
+
+  .code-block {
+    background: var(--code-bg);
+    border-radius: 6px;
+    margin: 1.5rem 0;
+    overflow: hidden;
+    border: 1px solid #2a2218;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.18);
+  }
+
+  .code-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 1rem;
+    background: #1a1410;
+    border-bottom: 1px solid #2a2218;
+  }
+
+  .code-block-label {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #6a5a48;
+    font-weight: 500;
+  }
+
+  .code-block-dots { display: flex; gap: 5px; }
+  .code-block-dots span {
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    background: #3a2e24;
+  }
+
+  .code-block pre {
+    padding: 1.4rem 1.5rem;
+    overflow-x: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    line-height: 1.65;
+    color: var(--code-fg);
+    tab-size: 2;
+    white-space: pre;
+  }
+
+  .diagram-block {
+    background: #0d0b09;
+    border-radius: 6px;
+    margin: 1.5rem 0;
+    overflow: hidden;
+    border: 1px solid #2a2218;
+  }
+
+  .diagram-block pre {
+    padding: 1.4rem 1.5rem;
+    overflow-x: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.74rem;
+    line-height: 1.7;
+    color: #c8b89a;
+    white-space: pre;
+  }
+
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: var(--paper-2);
+    padding: 1.1rem 1.4rem;
+    margin: 1.5rem 0;
+    border-radius: 0 4px 4px 0;
+  }
+
+  .callout-title {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.5rem;
+  }
+
+  .callout p {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.9rem;
+    color: var(--ink-2);
+    margin: 0;
+    line-height: 1.6;
+  }
+
+  .table-wrap {
+    overflow-x: auto;
+    margin: 1.5rem 0;
+    border: var(--rule);
+    border-radius: 5px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.83rem;
+  }
+
+  th {
+    background: var(--paper-2);
+    padding: 0.65rem 1rem;
+    text-align: left;
+    font-weight: 500;
+    font-size: 0.74rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    border-bottom: var(--rule);
+  }
+
+  td {
+    padding: 0.65rem 1rem;
+    border-bottom: var(--rule);
+    color: var(--ink-2);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  tr:last-child td { border-bottom: none; }
+
+  td code, th code { font-size: 0.77em; }
+
+  td:first-child code {
+    color: var(--code-key);
+    background: rgba(224,132,90,0.08);
+  }
+
+  .section-divider {
+    border: none;
+    border-top: var(--rule);
+    margin: 3.5rem 0;
+  }
+
+  .pull-quote {
+    margin: 2.5rem 0;
+    padding: 1.5rem 2rem;
+    border-top: 2px solid var(--ink);
+    border-bottom: var(--rule);
+  }
+
+  .pull-quote p {
+    font-size: 1.25rem;
+    font-style: italic;
+    color: var(--ink);
+    line-height: 1.55;
+    margin: 0;
+  }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--divider);
+    border: var(--rule);
+    border-radius: 5px;
+    overflow: hidden;
+    margin: 1.5rem 0;
+  }
+
+  .stat-cell {
+    background: var(--paper);
+    padding: 1.2rem 1.4rem;
+  }
+
+  .stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.6rem;
+    font-weight: 300;
+    color: var(--accent);
+    line-height: 1;
+    margin-bottom: 0.4rem;
+  }
+
+  .stat-label {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.75rem;
+    color: var(--ink-4);
+    letter-spacing: 0.04em;
+  }
+
+  /* Article footer */
+  .article-footer {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 2.5rem 3rem 4rem 3.5rem;
+    border-top: var(--rule);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+  }
+
+  .footer-block-title {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-4);
+    margin-bottom: 0.75rem;
+  }
+
+  .footer-block p {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.85rem;
+    color: var(--ink-3);
+    line-height: 1.55;
+  }
+
+  /* Responsive */
+  @media (max-width: 900px) {
+    .content-wrap { grid-template-columns: 1fr; }
+    .toc { display: none; }
+    .article { padding: 2rem 1.5rem 4rem; }
+    .hero { padding: 3rem 1.5rem 2rem; }
+    .stats-grid { grid-template-columns: 1fr 1fr; }
+    .article-footer { grid-template-columns: 1fr; padding: 2rem 1.5rem 3rem; }
+  }
+
+  @media (max-width: 500px) {
+    .stats-grid { grid-template-columns: 1fr; }
+    .site-header nav { display: none; }
+  }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .hero h1, .hero .subtitle, .meta-row {
+    animation: fadeUp 0.6s ease both;
+  }
+
+  .hero .subtitle { animation-delay: 0.1s; }
+  .meta-row { animation-delay: 0.2s; }
+
+  /* Syntax highlight helpers */
+  .kw  { color: var(--code-key); }
+  .cm  { color: var(--code-com); font-style: italic; }
+  .st  { color: var(--code-str); }
+  .nm  { color: var(--code-num); }
+  .fn  { color: #9ab8d4; }
+</style>
+</head>
+<body>
+
+<!-- SITE HEADER -->
+<header class="site-header">
+  <a href="index.html" class="logo">SNKV <span>/</span> Engineering</a>
+  <nav>
+    <a href="index.html#architecture">Architecture</a>
+    <a href="index.html#transactions">Transactions</a>
+    <a href="index.html#wal">WAL</a>
+    <a href="ttl.html">TTL</a>
+    <a href="https://github.com/hash-anu/snkv" target="_blank" rel="noopener" class="github-star">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      Star on GitHub
+    </a>
+  </nav>
+</header>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="category">Deep Dive · TTL Implementation</div>
+  <h1>TTL Without a Background Thread</h1>
+  <p class="subtitle">How SNKV implements per-key expiry using a dual B-tree index, lazy expiry on read, and an explicit purge — with zero background threads and full ACID guarantees.</p>
+  <div class="meta-row">
+    <span>SNKV v0.3.0</span>
+    <span class="sep">·</span>
+    <span class="tag">C · SQLite B-Tree</span>
+    <span class="tag">TTL</span>
+    <span class="tag">Embedded KV</span>
+  </div>
+</div>
+
+<!-- CONTENT -->
+<div class="content-wrap">
+
+  <!-- SIDEBAR TOC -->
+  <nav class="toc" aria-label="Table of contents">
+    <div class="toc-title">On this page</div>
+    <ul>
+      <li><a href="#design-goals">Design Goals</a></li>
+      <li><a href="#dual-index">Dual-Index Architecture</a>
+        <ul class="toc-sub">
+          <li><a href="#key-index">Key Index CF</a></li>
+          <li><a href="#expiry-index">Expiry Index CF</a></li>
+          <li><a href="#be64">Big-Endian Timestamp Encoding</a></li>
+        </ul>
+      </li>
+      <li><a href="#lazy-expiry">Lazy Expiry on Get</a></li>
+      <li><a href="#put-ttl">Put with TTL</a>
+        <ul class="toc-sub">
+          <li><a href="#put-overwrite">Overwrite Correctness</a></li>
+        </ul>
+      </li>
+      <li><a href="#purge">Explicit Purge</a>
+        <ul class="toc-sub">
+          <li><a href="#purge-batch">Batched Deletion</a></li>
+        </ul>
+      </li>
+      <li><a href="#zero-overhead">Zero Overhead for Non-TTL CFs</a></li>
+      <li><a href="#per-cf">Per-CF Isolation</a></li>
+      <li><a href="#iterator-ttl">Iterator TTL Handling</a></li>
+      <li><a href="#api">API Reference</a></li>
+      <li><a href="#tradeoffs">Design Tradeoffs</a></li>
+    </ul>
+  </nav>
+
+  <!-- ARTICLE -->
+  <article class="article">
+
+    <!-- DESIGN GOALS -->
+    <div class="section">
+      <div class="section-label">Overview</div>
+      <h2 id="design-goals">Design Goals</h2>
+
+      <p>Most embedded stores that add TTL reach for one of two mechanisms: a background thread that periodically scans for expired keys, or a scheduler that fires expiry callbacks. Both introduce complexity — thread lifecycle management, locking across expiry and reads, and non-deterministic deletion timing.</p>
+
+      <p>SNKV's TTL design avoids both. The constraints were:</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Constraint</th><th>Implication</th></tr></thead>
+          <tbody>
+            <tr><td><code>No background thread</code></td><td>Single-threaded embedded use; no daemon required</td></tr>
+            <tr><td><code>ACID for expiry</code></td><td>Expiry deletes must be transactional — no partial state</td></tr>
+            <tr><td><code>O(expired) purge</code></td><td>Scanning all keys to find expired ones is unacceptable</td></tr>
+            <tr><td><code>Zero overhead</code></td><td>CFs that never use TTL must pay nothing at all</td></tr>
+            <tr><td><code>Per-CF isolation</code></td><td>TTL on one CF must not affect another</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The result is a dual B-tree index per CF, lazily created on first TTL use, with lazy expiry on every read and an explicit <code>purge_expired()</code> for bulk cleanup.</p>
+    </div>
+
+    <hr class="section-divider">
+
+    <!-- DUAL INDEX -->
+    <div class="section">
+      <div class="section-label">Storage Model</div>
+      <h2 id="dual-index">Dual-Index Architecture</h2>
+
+      <p>For every column family <code>&lt;X&gt;</code> that uses TTL, two internal B-tree CFs are created:</p>
+
+      <div class="diagram-block"><pre>
+  User CF "sessions"       (data)
+  ┌──────────────────────────────────────────────────────────────┐
+  │  key → value                                                 │
+  └──────────────────────────────────────────────────────────────┘
+
+  __snkv_ttl_k__sessions   (key index)
+  ┌──────────────────────────────────────────────────────────────┐
+  │  key → expire_ms (8 bytes, big-endian int64)                 │
+  └──────────────────────────────────────────────────────────────┘
+
+  __snkv_ttl_e__sessions   (expiry index)
+  ┌──────────────────────────────────────────────────────────────┐
+  │  [expire_ms BE64][key] → empty                               │
+  │  sorted by expire_ms ascending (B-tree key order)            │
+  └──────────────────────────────────────────────────────────────┘</pre></div>
+
+      <h3 id="key-index">Key Index CF — <code>__snkv_ttl_k__&lt;X&gt;</code></h3>
+
+      <p>Maps each key that has an active TTL to its absolute expiry time in milliseconds since Unix epoch. This enables O(log n) point lookup during lazy expiry: when <code>get(key)</code> is called, SNKV looks up <code>key</code> in the key index to find its expiry, compares against <code>kvstore_now_ms()</code>, and evicts if expired.</p>
+
+      <div class="callout">
+        <div class="callout-title">Why a separate key index?</div>
+        <p>Storing the expiry timestamp inside the value payload would require reading and decoding the value on every get, even for non-TTL keys. The key index keeps TTL metadata out of the hot data path.</p>
+      </div>
+
+      <h3 id="expiry-index">Expiry Index CF — <code>__snkv_ttl_e__&lt;X&gt;</code></h3>
+
+      <p>The expiry index is the key to O(expired) purge. Each entry's key is an 8-byte big-endian <code>expire_ms</code> followed immediately by the original data key:</p>
+
+      <div class="diagram-block"><pre>
+  Expiry index key layout:
+  ┌──────────────────┬───────────────────────────────┐
+  │  expire_ms BE64  │  original key (variable len)  │
+  │  (8 bytes)       │                               │
+  └──────────────────┴───────────────────────────────┘
+
+  Example entries (sorted by B-tree key order = sorted by time):
+  1735000000000  "session:alice"    ← expires soonest
+  1735000000500  "session:bob"
+  1735001000000  "token:xyz"        ← expires latest</pre></div>
+
+      <p>Because the B-tree sorts entries lexicographically and the timestamp is the first 8 bytes in big-endian order, entries are physically sorted by expiry time. <code>purge_expired()</code> scans from the first entry forward, deleting everything with <code>expire_ms &lt;= now_ms</code>, and stops at the first entry that has not yet expired — without scanning the rest.</p>
+
+      <h3 id="be64">Big-Endian Timestamp Encoding</h3>
+
+      <p>The timestamp must be encoded in big-endian byte order for the B-tree's lexicographic sort to be numerically correct. Little-endian would reverse the byte significance and produce incorrect ordering.</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-label">src/kvstore.c — BE64 encode/decode</span>
+          <div class="code-block-dots"><span></span><span></span><span></span></div>
+        </div>
+        <pre><span class="kw">static void</span> <span class="fn">kvstoreEncodeBE64</span>(<span class="kw">unsigned char</span> buf[<span class="nm">8</span>], <span class="kw">int64_t</span> v){
+  buf[<span class="nm">0</span>] = (unsigned char)((v >> <span class="nm">56</span>) &amp; <span class="nm">0xFF</span>);
+  buf[<span class="nm">1</span>] = (unsigned char)((v >> <span class="nm">48</span>) &amp; <span class="nm">0xFF</span>);
+  buf[<span class="nm">2</span>] = (unsigned char)((v >> <span class="nm">40</span>) &amp; <span class="nm">0xFF</span>);
+  buf[<span class="nm">3</span>] = (unsigned char)((v >> <span class="nm">32</span>) &amp; <span class="nm">0xFF</span>);
+  buf[<span class="nm">4</span>] = (unsigned char)((v >> <span class="nm">24</span>) &amp; <span class="nm">0xFF</span>);
+  buf[<span class="nm">5</span>] = (unsigned char)((v >> <span class="nm">16</span>) &amp; <span class="nm">0xFF</span>);
+  buf[<span class="nm">6</span>] = (unsigned char)((v >>  <span class="nm">8</span>) &amp; <span class="nm">0xFF</span>);
+  buf[<span class="nm">7</span>] = (unsigned char)( v        &amp; <span class="nm">0xFF</span>);
+}
+
+<span class="kw">static int64_t</span> <span class="fn">kvstoreDecodeBE64</span>(<span class="kw">const unsigned char</span> buf[<span class="nm">8</span>]){
+  <span class="kw">return</span> ((<span class="kw">int64_t</span>)buf[<span class="nm">0</span>] &lt;&lt; <span class="nm">56</span>) | ((<span class="kw">int64_t</span>)buf[<span class="nm">1</span>] &lt;&lt; <span class="nm">48</span>) |
+         ((<span class="kw">int64_t</span>)buf[<span class="nm">2</span>] &lt;&lt; <span class="nm">40</span>) | ((<span class="kw">int64_t</span>)buf[<span class="nm">3</span>] &lt;&lt; <span class="nm">32</span>) |
+         ((<span class="kw">int64_t</span>)buf[<span class="nm">4</span>] &lt;&lt; <span class="nm">24</span>) | ((<span class="kw">int64_t</span>)buf[<span class="nm">5</span>] &lt;&lt; <span class="nm">16</span>) |
+         ((<span class="kw">int64_t</span>)buf[<span class="nm">6</span>] &lt;&lt;  <span class="nm">8</span>) |  (<span class="kw">int64_t</span>)buf[<span class="nm">7</span>];
+}</pre>
+      </div>
+    </div>
+
+    <hr class="section-divider">
+
+    <!-- LAZY EXPIRY -->
+    <div class="section">
+      <div class="section-label">Read Path</div>
+      <h2 id="lazy-expiry">Lazy Expiry on Get</h2>
+
+      <p>There is no background scanner. Expiry is checked on every <code>get</code> call for CFs that have active TTL keys. The check is short-circuited by <code>nTtlActive</code> — a counter of live TTL entries — so CFs without any TTL keys skip the check entirely with a single integer comparison.</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-label">src/kvstore.c — lazy expiry in get path</span>
+          <div class="code-block-dots"><span></span><span></span><span></span></div>
+        </div>
+        <pre><span class="cm">/* Fast path: skip TTL check if no keys have TTL */</span>
+<span class="kw">if</span>( pCF->hasTtl &amp;&amp; pCF->nTtlActive > <span class="nm">0</span> &amp;&amp; pCF->pTtlKeyCF ){
+
+  <span class="cm">/* O(log n) point lookup in key index CF */</span>
+  <span class="kw">void</span> *pTtlVal = NULL; <span class="kw">int</span> nTtlVal = <span class="nm">0</span>;
+  <span class="kw">int</span> rck = <span class="fn">kvstoreRawBtreeGet</span>(pKV, pCF->pTtlKeyCF->iTable,
+                               pKey, nKey, &amp;pTtlVal, &amp;nTtlVal);
+  <span class="kw">if</span>( rck == SQLITE_OK &amp;&amp; nTtlVal == <span class="nm">8</span> ){
+    int64_t expireMs = <span class="fn">kvstoreDecodeBE64</span>(pTtlVal);
+    <span class="fn">sqlite3_free</span>(pTtlVal);
+
+    <span class="kw">if</span>( <span class="fn">kvstore_now_ms</span>() >= expireMs ){
+      <span class="cm">/* Expired — upgrade to write tx, delete from all three tables */</span>
+      <span class="fn">kvstoreFreeCursor</span>(pCF->pReadCur);   <span class="cm">/* invalidate cached cursor */</span>
+      pCF->pReadCur = NULL;
+      <span class="fn">sqlite3BtreeBeginTrans</span>(pKV->pBt, <span class="nm">1</span>, <span class="nm">0</span>);
+      pKV->inTrans = <span class="nm">2</span>;
+
+      <span class="fn">kvstoreRawBtreeDelete</span>(pKV, pCF->iTable, pKey, nKey);
+      <span class="fn">kvstoreRawBtreeDelete</span>(pKV, pCF->pTtlKeyCF->iTable, pKey, nKey);
+      <span class="cm">/* delete from expiry index: key = [expire_ms BE64][original key] */</span>
+      <span class="fn">kvstoreRawBtreeDelete</span>(pKV, pCF->pTtlExpiryCF->iTable, pExpKey, <span class="nm">8</span>+nKey);
+
+      pCF->nTtlActive--;
+      <span class="fn">sqlite3BtreeCommit</span>(pKV->pBt);
+      <span class="kw">return</span> KVSTORE_NOTFOUND;
+    }
+  }
+}</pre>
+      </div>
+
+      <div class="callout">
+        <div class="callout-title">Transaction upgrade</div>
+        <p>A lazy expiry delete must upgrade the transaction from read to write. SNKV first commits the existing read transaction (releasing the WAL read slot), then begins a write transaction, performs the three deletes atomically, and commits. The cached read cursor is invalidated before the upgrade to avoid dangling cursor state.</p>
+      </div>
+
+      <p>The three deletes — data CF, key index, expiry index — happen in a single write transaction. Either all three succeed and commit, or none do. An expired key can never be in a partially-cleaned state.</p>
+    </div>
+
+    <hr class="section-divider">
+
+    <!-- PUT TTL -->
+    <div class="section">
+      <div class="section-label">Write Path</div>
+      <h2 id="put-ttl">Put with TTL</h2>
+
+      <p><code>kvstore_cf_put_ttl(pCF, pKey, nKey, pVal, nVal, expire_ms)</code> writes to three B-trees atomically within a single write transaction:</p>
+
+      <div class="diagram-block"><pre>
+  kvstore_cf_put_ttl("session:alice", "tok123", expire_ms=1735000000000)
+
+  Step 1 — write data CF:
+    sessions["session:alice"] = "tok123"
+
+  Step 2 — write key index:
+    __snkv_ttl_k__sessions["session:alice"] = BE64(1735000000000)
+
+  Step 3 — write expiry index:
+    __snkv_ttl_e__sessions[BE64(1735000000000) + "session:alice"] = ""
+
+  Step 4 — commit (all three or none)</pre></div>
+
+      <h3 id="put-overwrite">Overwrite Correctness</h3>
+
+      <p>When a plain <code>put()</code> (without TTL) overwrites a key that previously had a TTL, the old TTL entries must be cleaned up. Otherwise, a stale expiry index entry would later cause <code>purge_expired()</code> to delete a key that has already been replaced with a non-expiring value.</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-label">src/kvstore.c — TTL cleanup on plain put</span>
+          <div class="code-block-dots"><span></span><span></span><span></span></div>
+        </div>
+        <pre><span class="cm">/* After a successful plain put — clean up any stale TTL entries */</span>
+<span class="kw">if</span>( rc == SQLITE_OK &amp;&amp; pCF->hasTtl &amp;&amp;
+    pCF->nTtlActive > <span class="nm">0</span> &amp;&amp; pCF->pTtlKeyCF ){
+
+  <span class="kw">void</span> *pOldTtl = NULL; <span class="kw">int</span> nOldTtl = <span class="nm">0</span>;
+  <span class="kw">int</span> rck = <span class="fn">kvstoreRawBtreeGet</span>(pKV, pCF->pTtlKeyCF->iTable,
+                               pKey, nKey, &amp;pOldTtl, &amp;nOldTtl);
+  <span class="kw">if</span>( rck == SQLITE_OK &amp;&amp; nOldTtl == <span class="nm">8</span> ){
+    <span class="cm">/* Build the expiry index key: [old_expire_ms][original key] */</span>
+    <span class="kw">unsigned char</span> *pExpKey = <span class="fn">sqlite3Malloc</span>(<span class="nm">8</span> + nKey);
+    <span class="fn">memcpy</span>(pExpKey, pOldTtl, <span class="nm">8</span>);
+    <span class="fn">memcpy</span>(pExpKey + <span class="nm">8</span>, pKey, nKey);
+    <span class="fn">kvstoreRawBtreeDelete</span>(pKV, pCF->pTtlExpiryCF->iTable, pExpKey, <span class="nm">8</span>+nKey);
+    <span class="fn">sqlite3_free</span>(pExpKey);
+    <span class="fn">kvstoreRawBtreeDelete</span>(pKV, pCF->pTtlKeyCF->iTable, pKey, nKey);
+    pCF->nTtlActive--;
+  }
+  <span class="fn">sqlite3_free</span>(pOldTtl);
+}</pre>
+      </div>
+    </div>
+
+    <hr class="section-divider">
+
+    <!-- PURGE -->
+    <div class="section">
+      <div class="section-label">Bulk Cleanup</div>
+      <h2 id="purge">Explicit Purge</h2>
+
+      <p><code>kvstore_cf_purge_expired(pCF, &amp;nDeleted)</code> scans the expiry index from the beginning (smallest <code>expire_ms</code>) and deletes all entries where <code>expire_ms &lt;= now_ms</code>. It stops at the first entry that has not expired. Because the expiry index is sorted by time, this is O(expired keys) — not O(all TTL keys).</p>
+
+      <div class="diagram-block"><pre>
+  Expiry index (sorted ascending by expire_ms):
+
+  1735000000000  "session:alice"   ← expired, delete
+  1735000000500  "session:bob"     ← expired, delete
+  1735000001000  "session:carol"   ← expired, delete
+  1739000000000  "token:xyz"       ← NOT expired, stop here
+
+  purge scans 3 entries, deletes 3, never touches "token:xyz"</pre></div>
+
+      <h3 id="purge-batch">Batched Deletion</h3>
+
+      <p>The purge loop processes up to <code>KVSTORE_PURGE_BATCH = 256</code> expired keys per transaction. After each batch it commits, releases the mutex briefly, then continues. This prevents a single large purge from holding the write lock for an unbounded time.</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-label">src/kvstore.c — purge batch loop</span>
+          <div class="code-block-dots"><span></span><span></span><span></span></div>
+        </div>
+        <pre><span class="nm">#define</span> KVSTORE_PURGE_BATCH <span class="nm">256</span>
+
+<span class="kw">for</span>(;;){
+  <span class="cm">/* Stack-allocated batch arrays — no heap per batch */</span>
+  <span class="kw">void</span> *apExpKeys[KVSTORE_PURGE_BATCH];
+  <span class="kw">int</span>   anExpKeys[KVSTORE_PURGE_BATCH];
+  <span class="kw">int</span>   nExpired = <span class="nm">0</span>;
+
+  <span class="fn">sqlite3_mutex_enter</span>(pCF->pMutex);
+  <span class="fn">sqlite3_mutex_enter</span>(pKV->pMutex);
+
+  <span class="cm">/* Scan expiry index until batch full or first unexpired entry */</span>
+  <span class="cm">/* ... cursor scan ... */</span>
+
+  <span class="kw">if</span>( nExpired == <span class="nm">0</span> ){
+    <span class="cm">/* Nothing left to purge */</span>
+    <span class="fn">sqlite3_mutex_leave</span>(pKV->pMutex);
+    <span class="fn">sqlite3_mutex_leave</span>(pCF->pMutex);
+    <span class="kw">break</span>;
+  }
+
+  <span class="cm">/* Delete batch from all three tables, commit, release mutex */</span>
+  <span class="cm">/* ... delete loop ... */</span>
+
+  <span class="fn">sqlite3BtreeCommit</span>(pKV->pBt);
+  <span class="fn">sqlite3_mutex_leave</span>(pKV->pMutex);
+  <span class="fn">sqlite3_mutex_leave</span>(pCF->pMutex);
+  <span class="cm">/* other threads can run here before next batch */</span>
+}</pre>
+      </div>
+
+      <p>The batch arrays live on the stack and hold only pointers and lengths — approximately 3 KB per iteration (256 × 8-byte pointer + 256 × 4-byte int). The actual key bytes are heap-allocated during the scan and freed immediately after each batch commit.</p>
+    </div>
+
+    <hr class="section-divider">
+
+    <!-- ZERO OVERHEAD -->
+    <div class="section">
+      <div class="section-label">Performance</div>
+      <h2 id="zero-overhead">Zero Overhead for Non-TTL CFs</h2>
+
+      <p>The TTL index CFs are created lazily — only on the first <code>put_ttl</code> call for a given CF. Until that point, the CF struct fields are:</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-label">src/kvstore.c — KVColumnFamily TTL fields</span>
+          <div class="code-block-dots"><span></span><span></span><span></span></div>
+        </div>
+        <pre><span class="kw">struct</span> KVColumnFamily {
+  <span class="cm">/* ... other fields ... */</span>
+  <span class="kw">int</span>            hasTtl;        <span class="cm">/* 0 until first put_ttl */</span>
+  <span class="kw">int</span>            nTtlActive;    <span class="cm">/* 0 = no TTL keys alive */</span>
+  KVColumnFamily *pTtlKeyCF;    <span class="cm">/* NULL until first put_ttl */</span>
+  KVColumnFamily *pTtlExpiryCF; <span class="cm">/* NULL until first put_ttl */</span>
+};</pre>
+      </div>
+
+      <p>Every get on a CF with <code>hasTtl == 0</code> or <code>nTtlActive == 0</code> skips the TTL check with a single branch. There is no per-key overhead for CFs that never call <code>put_ttl</code>.</p>
+
+      <div class="stats-grid">
+        <div class="stat-cell">
+          <div class="stat-value">0</div>
+          <div class="stat-label">background threads</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-value">0</div>
+          <div class="stat-label">overhead for non-TTL CFs</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-value">O(exp)</div>
+          <div class="stat-label">purge complexity</div>
+        </div>
+      </div>
+    </div>
+
+    <hr class="section-divider">
+
+    <!-- PER-CF ISOLATION -->
+    <div class="section">
+      <div class="section-label">Isolation</div>
+      <h2 id="per-cf">Per-CF Isolation</h2>
+
+      <p>Each column family gets its own pair of TTL index CFs, named by appending the CF name to the prefix:</p>
+
+      <div class="diagram-block"><pre>
+  CF "sessions"  →  __snkv_ttl_k__sessions
+                    __snkv_ttl_e__sessions
+
+  CF "tokens"    →  __snkv_ttl_k__tokens
+                    __snkv_ttl_e__tokens
+
+  CF "cache"     →  __snkv_ttl_k__cache
+                    __snkv_ttl_e__cache</pre></div>
+
+      <p>Purging expired keys in <code>sessions</code> has no effect on <code>tokens</code>. The <code>nTtlActive</code> counter is per-CF. TTL state is completely isolated between column families — a CF with no active TTL keys skips the check even if another CF in the same store has thousands of expiring keys.</p>
+
+      <p>The <code>__snkv_ttl_</code> prefix is reserved. The public API rejects any user attempt to create a CF whose name starts with <code>__</code>, preventing accidental collision with internal index CFs.</p>
+    </div>
+
+    <hr class="section-divider">
+
+    <!-- ITERATOR TTL -->
+    <div class="section">
+      <div class="section-label">Iteration</div>
+      <h2 id="iterator-ttl">Iterator TTL Handling</h2>
+
+      <p>The prefix iterator and full iterator also perform lazy TTL checks on each key they visit. Expired keys are evicted during iteration — they are deleted from all three tables and the iterator advances past them transparently. The caller never sees an expired key from an iterator.</p>
+
+      <p>Because the iterator holds its own B-tree cursor (separate from <code>pReadCur</code>), the upgrade from read to write transaction during lazy expiry requires the iterator cursor to be closed before the write, and re-opened and re-positioned after commit. SNKV saves the last seen key before the write and restores the cursor position after.</p>
+    </div>
+
+    <hr class="section-divider">
+
+    <!-- API -->
+    <div class="section">
+      <div class="section-label">Interface</div>
+      <h2 id="api">API Reference</h2>
+
+      <h3>C API</h3>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Function</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>kvstore_put_ttl(pKV, key, nKey, val, nVal, expire_ms)</code></td><td>Put with absolute expiry time (ms since epoch) on default CF</td></tr>
+            <tr><td><code>kvstore_cf_put_ttl(pCF, key, nKey, val, nVal, expire_ms)</code></td><td>Same, on named CF</td></tr>
+            <tr><td><code>kvstore_get_ttl(pKV, key, nKey, ...)</code></td><td>Get with TTL, lazy expiry on read</td></tr>
+            <tr><td><code>kvstore_cf_get_ttl(pCF, key, nKey, ...)</code></td><td>Same, on named CF</td></tr>
+            <tr><td><code>kvstore_ttl_remaining(pKV, key, nKey, &amp;remaining)</code></td><td>Seconds remaining for key; <code>KVSTORE_NO_TTL</code> if no TTL set</td></tr>
+            <tr><td><code>kvstore_cf_ttl_remaining(pCF, key, nKey, &amp;remaining)</code></td><td>Same, on named CF</td></tr>
+            <tr><td><code>kvstore_purge_expired(pKV, &amp;nDeleted)</code></td><td>Bulk delete all expired keys on default CF</td></tr>
+            <tr><td><code>kvstore_cf_purge_expired(pCF, &amp;nDeleted)</code></td><td>Same, on named CF</td></tr>
+            <tr><td><code>kvstore_now_ms()</code></td><td>Current time in ms since Unix epoch</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Python API</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-label">Python — TTL usage</span>
+          <div class="code-block-dots"><span></span><span></span><span></span></div>
+        </div>
+        <pre><span class="kw">from</span> snkv <span class="kw">import</span> KVStore, NotFoundError
+
+<span class="kw">with</span> <span class="fn">KVStore</span>(<span class="st">"mydb.db"</span>) <span class="kw">as</span> db:
+    <span class="cm"># Put with TTL — seconds (float precision)</span>
+    db.<span class="fn">put</span>(<span class="st">b"session"</span>, <span class="st">b"tok123"</span>, ttl=<span class="nm">60</span>)
+
+    <span class="cm"># Dict-style shorthand: db[key, ttl] = value</span>
+    db[<span class="st">b"token"</span>, <span class="nm">30</span>] = <span class="st">b"bearer-xyz"</span>
+
+    <span class="cm"># Get — expired keys raise NotFoundError</span>
+    val = db.<span class="fn">get</span>(<span class="st">b"session"</span>)
+
+    <span class="cm"># Check remaining lifetime</span>
+    <span class="kw">try</span>:
+        remaining = db.<span class="fn">ttl</span>(<span class="st">b"session"</span>)   <span class="cm"># float seconds</span>
+    <span class="kw">except</span> NotFoundError:
+        remaining = <span class="kw">None</span>
+
+    <span class="cm"># Purge all expired keys (returns count removed)</span>
+    n = db.<span class="fn">purge_expired</span>()
+
+    <span class="cm"># Column families support TTL identically</span>
+    <span class="kw">with</span> db.<span class="fn">create_column_family</span>(<span class="st">"cache"</span>) <span class="kw">as</span> cf:
+        cf[<span class="st">b"item"</span>, <span class="nm">10</span>] = <span class="st">b"data"</span>
+        n = cf.<span class="fn">purge_expired</span>()</pre>
+      </div>
+    </div>
+
+    <hr class="section-divider">
+
+    <!-- TRADEOFFS -->
+    <div class="section">
+      <div class="section-label">Analysis</div>
+      <h2 id="tradeoffs">Design Tradeoffs</h2>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Property</th><th>SNKV (lazy + explicit purge)</th><th>Background thread (Redis-style)</th></tr></thead>
+          <tbody>
+            <tr><td>Expiry precision</td><td>Exact on read; best-effort on disk until purge</td><td>Probabilistic; background thread fires on interval</td></tr>
+            <tr><td>Read overhead</td><td>One extra B-tree lookup per get (skipped if no TTL)</td><td>None on read path</td></tr>
+            <tr><td>Disk space</td><td>Expired keys remain on disk until purge is called</td><td>Reclaimed asynchronously by background thread</td></tr>
+            <tr><td>Thread model</td><td>Zero additional threads</td><td>One background thread per store</td></tr>
+            <tr><td>ACID for expiry</td><td>Yes — all three deletes in one transaction</td><td>Depends on implementation</td></tr>
+            <tr><td>Purge complexity</td><td>O(expired keys)</td><td>O(sampled keys) or O(all TTL keys)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="pull-quote">
+        <p>Expired keys are invisible to reads immediately. They are invisible to disk after <code>purge_expired()</code>. The distinction matters only for storage budgets, not correctness.</p>
+      </div>
+
+      <p>For embedded use cases — mobile apps, IoT, CLI tools, edge servers — the zero-thread model is the right default. A background thread that fires every N seconds requires the process to stay alive long enough for it to run, and introduces thread lifecycle complexity that single-threaded embedders simply do not want.</p>
+
+      <p>Applications that need aggressive space reclamation can call <code>purge_expired()</code> on a schedule that fits their workload — after each request batch, on a timer, or at startup — and optionally follow with <code>vacuum()</code> to release the freed pages back to the OS.</p>
+    </div>
+
+  </article>
+</div>
+
+<!-- FOOTER -->
+<footer class="article-footer">
+  <div class="footer-block">
+    <div class="footer-block-title">Source code</div>
+    <p>TTL implementation lives in <code>src/kvstore.c</code> starting at the <code>kvstore_cf_put_ttl</code> function. All TTL index CF names use the <code>__snkv_ttl_</code> prefix which is reserved by the public API.</p>
+  </div>
+  <div class="footer-block">
+    <div class="footer-block-title">Open source</div>
+    <p>SNKV is Apache 2.0 licensed. Source, issues, and contributions at <a href="https://github.com/hash-anu/snkv" target="_blank" rel="noopener">github.com/hash-anu/snkv</a>.</p>
+    <br>
+    <a href="https://github.com/hash-anu/snkv" target="_blank" rel="noopener" class="github-star">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      Star on GitHub
+    </a>
+  </div>
+</footer>
+
+<script>
+  /* Active TOC tracking */
+  const sections = document.querySelectorAll('h2[id], h3[id]');
+  const tocLinks = document.querySelectorAll('.toc a');
+
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        tocLinks.forEach(a => a.classList.remove('active'));
+        const active = document.querySelector(`.toc a[href="#${entry.target.id}"]`);
+        if (active) active.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-56px 0px -70% 0px' });
+
+  sections.forEach(s => observer.observe(s));
+</script>
+
+</body>
+</html>
