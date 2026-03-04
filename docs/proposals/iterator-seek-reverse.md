@@ -334,6 +334,24 @@ usage.
 
 ---
 
+## Thread Safety
+
+The thread-safety model for reverse iterators is identical to forward iterators:
+
+| Scope | Thread-safe? | Notes |
+|---|---|---|
+| `KVStore *` / `KVColumnFamily *` | Yes | Multiple threads may create iterators concurrently. |
+| `KVIterator *` handle | No | One thread at a time per iterator handle. |
+| `kvstore_iterator_last` / `prev` | No (per handle) | No mutex held during cursor movement. |
+| TTL lazy-delete inside `prev` | Yes (internally) | `kvstoreIterSkipExpiredReverse` acquires `pCF->pMutex` + `pKV->pMutex` before writing, same as `kvstoreIterSkipExpired` does for forward iteration. |
+
+The creation functions (`kvstore_reverse_iterator_create`,
+`kvstore_reverse_prefix_iterator_create`) hold `pKV->pMutex` during cursor
+setup and release it before returning — same as `kvstore_cf_iterator_create`.
+No new locking rules are introduced.
+
+---
+
 ## Backward Compatibility
 
 - No existing function signatures change.
