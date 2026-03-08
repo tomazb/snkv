@@ -200,11 +200,69 @@ static void example_prefix_iteration(void) {
     printf("\n");
 }
 
+static void example_prefix_delete(void) {
+    KVStore *pKV;
+    KVIterator *pIter;
+
+    printf("=== Prefix Delete ===\n");
+
+    kvstore_open("prefixdel.db", &pKV, KVSTORE_JOURNAL_WAL);
+
+    kvstore_put(pKV, "session:abc", 11, "user1", 5);
+    kvstore_put(pKV, "session:def", 11, "user2", 5);
+    kvstore_put(pKV, "session:ghi", 11, "user3", 5);
+    kvstore_put(pKV, "config:theme", 12, "dark", 4);
+    kvstore_put(pKV, "config:lang",  11, "en",   2);
+
+    /* Step 1: collect all keys under the "session:" prefix.
+    ** The iterator must be closed before any write. */
+    kvstore_prefix_iterator_create(pKV, "session:", 8, &pIter);
+
+    /* Use a fixed-size key bucket — real code would use a dynamic array. */
+    char  keys[16][64];
+    int   keyLens[16];
+    int   nKeys = 0;
+
+    for (kvstore_iterator_first(pIter);
+         !kvstore_iterator_eof(pIter);
+         kvstore_iterator_next(pIter)) {
+
+        void *pKey; int nKey;
+        kvstore_iterator_key(pIter, &pKey, &nKey);
+        if (nKey < (int)sizeof(keys[0]) && nKeys < 16) {
+            memcpy(keys[nKeys], pKey, nKey);
+            keyLens[nKeys] = nKey;
+            nKeys++;
+        }
+    }
+    kvstore_iterator_close(pIter);  /* close before writing */
+
+    int64_t total = 0;
+    kvstore_count(pKV, &total);
+    printf("Keys before delete: %" PRId64 "\n", total);
+
+    /* Step 2: delete all collected keys atomically. */
+    kvstore_begin(pKV, 1);
+    for (int i = 0; i < nKeys; i++)
+        kvstore_delete(pKV, keys[i], keyLens[i]);
+    kvstore_commit(pKV);
+
+    int64_t remaining = 0;
+    kvstore_count(pKV, &remaining);
+    printf("Keys after delete:  %" PRId64 " (deleted %d session keys)\n",
+           remaining, nKeys);
+
+    kvstore_close(pKV);
+    remove("prefixdel.db");
+    printf("\n");
+}
+
 int main(void) {
     example_basic_scan();
     example_filtered_iteration();
     example_statistics();
     example_prefix_iteration();
+    example_prefix_delete();
     printf("All iterator examples passed.\n");
     return 0;
 }
