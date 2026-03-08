@@ -55,12 +55,16 @@
 **  38.  Count after purge_expired → only live keys counted
 **  39.  CF count counts only that CF (not other CFs or TTL CFs)
 **  40.  kvstore_count delegates to default CF correctly
+**
+**   --- clear reduces page count ---
+**  41.  Fill store with many keys, clear, checkpoint TRUNCATE → nDbPages decreases
 */
 
 #include "kvstore.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 
 /* ---- helpers ---- */
 
@@ -1053,6 +1057,64 @@ static void test40_kvstore_count_default(void){
 }
 
 /* ====================================================================== */
+/* --- clear reduces page count --- */
+/* ====================================================================== */
+
+static void test41_clear_reduces_pages(void){
+  printf("\nTest 41: fill + clear + checkpoint TRUNCATE → nDbPages decreases\n");
+  const char *path = "test_new_apis_41.db";
+  KVStore *pKV = openFresh(path);
+  if( !pKV ) return;
+
+  /* Insert enough keys to force multiple B-tree pages. */
+  char key[32], val[256];
+  memset(val, 'X', sizeof(val));
+  for( int i = 0; i < 2000; i++ ){
+    int nKey = snprintf(key, sizeof(key), "key%07d", i);
+    kvstore_put(pKV, key, nKey, val, (int)sizeof(val));
+  }
+
+  KVStoreStats st_before = {0};
+  kvstore_stats(pKV, &st_before);
+
+  /* Clear all keys. */
+  int rc = kvstore_clear(pKV);
+  ASSERT("clear OK", rc == KVSTORE_OK);
+
+  /* Incremental vacuum reclaims the freed pages back to the OS,
+     shrinking nDbPages. 0 = drain the entire free list. */
+  kvstore_incremental_vacuum(pKV, 0);
+
+  KVStoreStats st_after = {0};
+  kvstore_stats(pKV, &st_after);
+
+  ASSERT("nDbPages before clear > 0", st_before.nDbPages > 0);
+  ASSERT("nDbPages after clear+vacuum < before",
+         st_after.nDbPages < st_before.nDbPages);
+
+  /* Close so the pager flushes and truncates the file, then check size. */
+  kvstore_close(pKV);
+  pKV = NULL;
+
+  /* Re-use st_before.nDbPages * 4096 as a proxy for the pre-clear file size. */
+  long size_before = (long)st_before.nDbPages * 4096;
+  struct stat sb = {0};
+  stat(path, &sb);
+  long size_after = (long)sb.st_size;
+
+  ASSERT("file size before clear > 0", size_before > 0);
+  ASSERT("file size after clear+vacuum < before", size_after < size_before);
+
+  /* Remove DB files manually since pKV is already closed. */
+  remove(path);
+  char wal_path[256], shm_path[256];
+  snprintf(wal_path, sizeof(wal_path), "%s-wal", path);
+  snprintf(shm_path, sizeof(shm_path), "%s-shm", path);
+  remove(wal_path);
+  remove(shm_path);
+}
+
+/* ====================================================================== */
 /* --- main --- */
 /* ====================================================================== */
 
@@ -1108,6 +1170,9 @@ int main(void){
   test38_count_after_purge();
   test39_cf_count_isolation();
   test40_kvstore_count_default();
+
+  /* clear reduces page count */
+  test41_clear_reduces_pages();
 
   printf("\n=== Results: %d passed, %d failed ===\n", passed, failed);
   return (failed > 0) ? 1 : 0;

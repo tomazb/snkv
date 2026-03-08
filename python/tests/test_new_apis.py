@@ -449,3 +449,33 @@ def test_stats_has_all_keys(db):
         "ttl_expired", "ttl_purged", "db_pages",
     }
     assert expected <= set(st.keys())
+
+
+# ===========================================================================
+# clear reduces page count
+# ===========================================================================
+
+def test_clear_reduces_db_pages(tmp_path):
+    """Fill store, clear, vacuum → db_pages and file size both decrease."""
+    import os
+    path = str(tmp_path / "clear_pages.db")
+    with KVStore(path) as db:
+        val = b"X" * 256
+        for i in range(2000):
+            db.put(f"key{i:07d}".encode(), val)
+
+        pages_before = db.stats()["db_pages"]
+
+        db.clear()
+        db.vacuum(0)  # 0 = free all unused pages
+
+        pages_after = db.stats()["db_pages"]
+
+    # File is flushed and truncated after the context manager closes.
+    size_before = pages_before * 4096  # page_size default is 4096
+    size_after = os.path.getsize(path)
+
+    assert pages_before > 0
+    assert pages_after < pages_before
+    assert size_before > 0
+    assert size_after < size_before
