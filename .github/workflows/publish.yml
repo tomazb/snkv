@@ -28,6 +28,9 @@ jobs:
         if: runner.os != 'Windows'
         run: make snkv.h && cp snkv.h python/
 
+      - name: Install virtualenv (avoids 429 rate-limit on cibuildwheel download)
+        run: pip install virtualenv
+
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.22.0
         with:
