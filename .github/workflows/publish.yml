@@ -28,8 +28,25 @@ jobs:
         if: runner.os != 'Windows'
         run: make snkv.h && cp snkv.h python/
 
-      - name: Install virtualenv (avoids 429 rate-limit on cibuildwheel download)
-        run: pip install virtualenv
+      - name: Pre-cache virtualenv.pyz (Linux and macOS)
+        if: runner.os != 'Windows'
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            CACHE_DIR="$HOME/.cache/cibuildwheel"
+          else
+            CACHE_DIR="$HOME/Library/Caches/cibuildwheel"
+          fi
+          mkdir -p "$CACHE_DIR"
+          curl -fsSL "https://raw.githubusercontent.com/pypa/get-virtualenv/20.27.1/public/virtualenv.pyz" \
+            -o "$CACHE_DIR/virtualenv-20.27.1.pyz"
+
+      - name: Pre-cache virtualenv.pyz (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dest = "$env:LOCALAPPDATA\pypa\cibuildwheel\Cache\virtualenv-20.27.1.pyz"
+          New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
+          Invoke-WebRequest "https://raw.githubusercontent.com/pypa/get-virtualenv/20.27.1/public/virtualenv.pyz" -OutFile $dest
 
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.22.0
