@@ -27,7 +27,7 @@ If you find it useful, a ⭐ on [GitHub](https://github.com/hash-anu/snkv) goes 
 - **Bulk clear** — `db.clear()` / `cf.clear()` truncates all keys in O(pages) without dropping the store
 - **Key count** — `db.count()` / `cf.count()` returns entry count in O(pages); CF counts are fully isolated
 - **Extended stats** — `db.stats()` exposes 12 counters including `bytes_read`, `bytes_written`, `wal_commits`, `ttl_expired`, `db_pages`; reset with `db.stats_reset()`
-- **351 tests** — full pytest suite covering ACID, WAL, crash recovery, concurrency, column families, TTL, and more
+- **352 tests** — full pytest suite covering ACID, WAL, crash recovery, concurrency, column families, TTL, and more
 
 ---
 
@@ -451,7 +451,7 @@ cd python
 PYTHONPATH=. python3 -m pytest tests/ -v
 ```
 
-All 351 tests should pass.
+All 352 tests should pass.
 
 ---
 

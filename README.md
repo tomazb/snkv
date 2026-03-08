@@ -42,6 +42,7 @@ int main(void) {
     kvstore_close(db);
 }
 ```
+**C/C++ API Reference:** [hash-anu.github.io/snkv/api.html](https://hash-anu.github.io/snkv/api.html#lang=c)
 
 ---
 
