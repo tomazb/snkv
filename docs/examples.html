@@ -687,7 +687,7 @@ KVIterator *pIter = <span class="kw">NULL</span>;
             <span class="ex-card-title">put_if_absent — atomic conditional insert</span>
             <span class="ex-card-file">examples/new_apis.c</span>
           </div>
-<pre"><span class="kw">int</span> inserted = <span class="nm">0</span>;
+<pre>><span class="kw">int</span> inserted = <span class="nm">0</span>;
 
 <span class="cm">/* Key absent → inserted=1 */</span>
 <span class="fn">kvstore_put_if_absent</span>(pKV, <span class="str">"lock"</span>, <span class="nm">4</span>, <span class="str">"owner:alice"</span>, <span class="nm">11</span>, <span class="nm">0</span>, &amp;inserted);
@@ -707,7 +707,7 @@ KVIterator *pIter = <span class="kw">NULL</span>;
             <span class="ex-card-title">clear · count · stats</span>
             <span class="ex-card-file">examples/new_apis.c</span>
           </div>
-<pre"><span class="cm">/* count — O(pages) via sqlite3BtreeCount */</span>
+<pre>><span class="cm">/* count — O(pages) via sqlite3BtreeCount */</span>
 <span class="kw">int64_t</span> n = <span class="nm">0</span>;
 <span class="fn">kvstore_count</span>(pKV, &amp;n);
 <span class="fn">printf</span>(<span class="str">"entries: %lld\n"</span>, (<span class="kw">long long</span>)n);
@@ -738,7 +738,7 @@ KVStoreStats st = {<span class="nm">0</span>};
             <span class="ex-card-title">Session store with TTL + column family</span>
             <span class="ex-card-file">examples/session_store.c</span>
           </div>
-<pre">KVColumnFamily *pSessions = <span class="kw">NULL</span>;
+<pre>>KVColumnFamily *pSessions = <span class="kw">NULL</span>;
 <span class="fn">kvstore_cf_create</span>(pKV, <span class="str">"sessions"</span>, &amp;pSessions);
 
 <span class="cm">/* Create session — expires in 30 minutes */</span>
@@ -773,7 +773,7 @@ KVStoreStats st = {<span class="nm">0</span>};
             <span class="ex-card-title">Manual and auto-checkpoint</span>
             <span class="ex-card-file">examples/checkpoint_demo.c</span>
           </div>
-<pre"><span class="cm">/* Manual checkpoint — TRUNCATE mode resets WAL to zero bytes */</span>
+<pre>><span class="cm">/* Manual checkpoint — TRUNCATE mode resets WAL to zero bytes */</span>
 <span class="kw">int</span> nLog = <span class="nm">0</span>, nCkpt = <span class="nm">0</span>;
 <span class="fn">kvstore_checkpoint</span>(pKV, KVSTORE_CHECKPOINT_TRUNCATE, &amp;nLog, &amp;nCkpt);
 <span class="fn">printf</span>(<span class="str">"WAL frames: %d total, %d checkpointed\n"</span>, nLog, nCkpt);
@@ -827,7 +827,7 @@ KVStoreStats st = {<span class="nm">0</span>};
             <span class="ex-card-title">Binary data + In-memory store</span>
             <span class="ex-card-file">python/examples/basic.py</span>
           </div>
-<pre"><span class="cm"># Arbitrary binary keys and values</span>
+<pre>><span class="cm"># Arbitrary binary keys and values</span>
 db.put(bytes([<span class="nm">0x00</span>, <span class="nm">0x01</span>, <span class="nm">0xFF</span>]), bytes(range(<span class="nm">256</span>)))
 
 <span class="cm"># In-memory store — no file created, data gone after close</span>
@@ -848,7 +848,7 @@ db.put(bytes([<span class="nm">0x00</span>, <span class="nm">0x01</span>, <span 
             <span class="ex-card-title">Batch write + rollback on error</span>
             <span class="ex-card-file">python/examples/transactions.py</span>
           </div>
-<pre"><span class="kw">with</span> <span class="fn">KVStore</span>(<span class="str">"bank.db"</span>) <span class="kw">as</span> db:
+<pre>><span class="kw">with</span> <span class="fn">KVStore</span>(<span class="str">"bank.db"</span>) <span class="kw">as</span> db:
     <span class="cm"># Atomic batch — all writes commit together</span>
     db.begin(write=<span class="kw">True</span>)
     <span class="kw">try</span>:
@@ -878,7 +878,7 @@ db.put(bytes([<span class="nm">0x00</span>, <span class="nm">0x01</span>, <span 
             <span class="ex-card-title">Create, isolate, list, drop</span>
             <span class="ex-card-file">python/examples/column_families.py</span>
           </div>
-<pre"><span class="kw">with</span> <span class="fn">KVStore</span>(<span class="str">"store.db"</span>) <span class="kw">as</span> db:
+<pre>><span class="kw">with</span> <span class="fn">KVStore</span>(<span class="str">"store.db"</span>) <span class="kw">as</span> db:
     <span class="cm"># Create namespaces</span>
     <span class="kw">with</span> db.<span class="fn">create_column_family</span>(<span class="str">"users"</span>) <span class="kw">as</span> users:
         users[<span class="str">"alice"</span>] = <span class="str">"alice@example.com"</span>
@@ -912,7 +912,7 @@ db.put(bytes([<span class="nm">0x00</span>, <span class="nm">0x01</span>, <span 
             <span class="ex-card-title">Full scan + prefix scan</span>
             <span class="ex-card-file">python/examples/iterators.py</span>
           </div>
-<pre"><span class="kw">with</span> <span class="fn">KVStore</span>(<span class="str">"store.db"</span>) <span class="kw">as</span> db:
+<pre>><span class="kw">with</span> <span class="fn">KVStore</span>(<span class="str">"store.db"</span>) <span class="kw">as</span> db:
     <span class="cm"># Full scan — for loop uses iterator() under the hood</span>
     <span class="kw">for</span> key, value <span class="kw">in</span> db:
         print(key.decode(), <span class="str">"->"</span>, value.decode())
@@ -942,7 +942,7 @@ db.put(bytes([<span class="nm">0x00</span>, <span class="nm">0x01</span>, <span 
             <span class="ex-card-title">Reverse full + reverse prefix + seek</span>
             <span class="ex-card-file">python/examples/iterator_reverse.py</span>
           </div>
-<pre"><span class="kw">with</span> <span class="fn">KVStore</span>(<span class="str">"store.db"</span>) <span class="kw">as</span> db:
+<pre>><span class="kw">with</span> <span class="fn">KVStore</span>(<span class="str">"store.db"</span>) <span class="kw">as</span> db:
     <span class="cm"># Reverse full scan — largest key first</span>
     <span class="kw">for</span> key, value <span class="kw">in</span> db.<span class="fn">reverse_iterator</span>():
         print(key, value)
@@ -976,7 +976,7 @@ db.put(bytes([<span class="nm">0x00</span>, <span class="nm">0x01</span>, <span 
             <span class="ex-card-title">Basic TTL, lazy expiry, purge</span>
             <span class="ex-card-file">python/examples/ttl.py</span>
           </div>
-<pre"><span class="kw">from</span> snkv <span class="kw">import</span> KVStore, NotFoundError, NO_TTL
+<pre>><span class="kw">from</span> snkv <span class="kw">import</span> KVStore, NotFoundError, NO_TTL
 
 <span class="kw">with</span> <span class="fn">KVStore</span>(<span class="str">"store.db"</span>) <span class="kw">as</span> db:
     <span class="cm"># Put with TTL — expires in 60 seconds</span>
@@ -1000,7 +1000,7 @@ db.put(bytes([<span class="nm">0x00</span>, <span class="nm">0x01</span>, <span 
             <span class="ex-card-title">Rate limiter — real-world TTL pattern</span>
             <span class="ex-card-file">python/examples/ttl.py</span>
           </div>
-<pre"><span class="kw">class</span> RateLimiter:
+<pre>><span class="kw">class</span> RateLimiter:
     <span class="kw">def</span> <span class="fn">__init__</span>(self, db, limit, window_s):
         self._cf = db.<span class="fn">create_column_family</span>(<span class="str">"rl"</span>)
         self._limit = limit; self._window = window_s
@@ -1033,7 +1033,7 @@ print(rl.<span class="fn">is_allowed</span>(<span class="str">"alice"</span>))  
             <span class="ex-card-title">Iterator seek — forward, reverse, prefix, chaining</span>
             <span class="ex-card-file">python/examples/new_apis.py</span>
           </div>
-<pre"><span class="kw">with</span> <span class="fn">KVStore</span>(<span class="str">"store.db"</span>) <span class="kw">as</span> db:
+<pre>><span class="kw">with</span> <span class="fn">KVStore</span>(<span class="str">"store.db"</span>) <span class="kw">as</span> db:
     <span class="cm"># Forward seek — first key >= target</span>
     <span class="kw">with</span> db.<span class="fn">iterator</span>() <span class="kw">as</span> it:
         it.<span class="fn">seek</span>(<span class="str">b"cherry"</span>)
@@ -1061,7 +1061,7 @@ print(rl.<span class="fn">is_allowed</span>(<span class="str">"alice"</span>))  
             <span class="ex-card-title">put_if_absent — distributed lock + deduplication</span>
             <span class="ex-card-file">python/examples/new_apis.py</span>
           </div>
-<pre"><span class="kw">with</span> <span class="fn">KVStore</span>(<span class="str">"store.db"</span>) <span class="kw">as</span> db:
+<pre>><span class="kw">with</span> <span class="fn">KVStore</span>(<span class="str">"store.db"</span>) <span class="kw">as</span> db:
     <span class="cm"># Absent → inserted=True</span>
     inserted = db.<span class="fn">put_if_absent</span>(<span class="str">b"lock"</span>, <span class="str">b"owner:alice"</span>)
     print(inserted)   <span class="cm"># True</span>
@@ -1085,7 +1085,7 @@ print(rl.<span class="fn">is_allowed</span>(<span class="str">"alice"</span>))  
             <span class="ex-card-title">clear · count · stats + stats_reset</span>
             <span class="ex-card-file">python/examples/new_apis.py</span>
           </div>
-<pre"><span class="kw">with</span> <span class="fn">KVStore</span>(<span class="str">"store.db"</span>) <span class="kw">as</span> db:
+<pre>><span class="kw">with</span> <span class="fn">KVStore</span>(<span class="str">"store.db"</span>) <span class="kw">as</span> db:
     <span class="cm"># count — O(pages) via sqlite3BtreeCount</span>
     print(db.<span class="fn">count</span>())   <span class="cm"># e.g. 10000</span>
 
@@ -1118,7 +1118,7 @@ print(rl.<span class="fn">is_allowed</span>(<span class="str">"alice"</span>))  
             <span class="ex-card-title">Session store + job scheduler</span>
             <span class="ex-card-file">python/examples/session_store.py · new_apis.py</span>
           </div>
-<pre"><span class="kw">with</span> <span class="fn">KVStore</span>(<span class="str">"store.db"</span>) <span class="kw">as</span> db:
+<pre>><span class="kw">with</span> <span class="fn">KVStore</span>(<span class="str">"store.db"</span>) <span class="kw">as</span> db:
     <span class="kw">with</span> db.<span class="fn">create_column_family</span>(<span class="str">"sessions"</span>) <span class="kw">as</span> cf:
         <span class="cm"># Create — expires in 30 minutes</span>
         cf.put(<span class="str">b"sess:abc"</span>, <span class="str">b"user_id=42"</span>, ttl=<span class="nm">1800</span>)
@@ -1144,7 +1144,7 @@ print(rl.<span class="fn">is_allowed</span>(<span class="str">"alice"</span>))  
             <span class="ex-card-title">5 concurrent worker processes</span>
             <span class="ex-card-file">python/examples/multiprocess.py</span>
           </div>
-<pre"><span class="kw">import</span> multiprocessing
+<pre>><span class="kw">import</span> multiprocessing
 <span class="kw">from</span> snkv <span class="kw">import</span> KVStore, JOURNAL_WAL
 
 <span class="kw">def</span> <span class="fn">worker</span>(db_path, worker_id):
