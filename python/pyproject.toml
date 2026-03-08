@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "snkv"
-version = "0.4.0"
+version = "0.5.0"
 requires-python = ">=3.8"
-description = "Crash-safe embedded key-value store — native TTL, reverse iterators, column families, ACID transactions"
+description = "Crash-safe embedded key-value store — TTL, reverse iterators, iterator seek, put_if_absent, column families, ACID transactions"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 classifiers = [
@@ -22,6 +22,7 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/hash-anu/snkv"
+Documentation = "https://hash-anu.github.io/snkv/api.html#lang=py"
 
 [tool.setuptools.packages.find]
 where = ["."]
