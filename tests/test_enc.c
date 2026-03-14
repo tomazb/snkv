@@ -49,7 +49,7 @@ static void check(const char *name, int ok){
 static char gTmpPath[256];
 static int  gTmpIdx = 0;
 static const char *tmpdb(void){
-  snprintf(gTmpPath, sizeof(gTmpPath), "/tmp/snkv_enc_test_%d.db", gTmpIdx++);
+  snprintf(gTmpPath, sizeof(gTmpPath), "tests/enc_test_%d.db", gTmpIdx++);
   return gTmpPath;
 }
 
@@ -66,7 +66,6 @@ static void test_create_encrypted(void){
   const char *path = tmpdb();
   KVStore *db = NULL;
   int rc = kvstore_open_encrypted(path, "password", 8, &db, NULL);
-  printf("  [debug] open_encrypted rc=%d\n", rc);
   ASSERT("open_encrypted returns OK", rc == KVSTORE_OK);
   ASSERT("db handle non-NULL", db != NULL);
   ASSERT("is_encrypted == 1", kvstore_is_encrypted(db) == 1);
