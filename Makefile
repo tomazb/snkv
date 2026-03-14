@@ -24,7 +24,7 @@ ifeq ($(UNAME_S),Darwin)
 endif
 ifeq ($(UNAME_S),Windows)
   # Native Windows / MSYS2 / MinGW
-  LDFLAGS = 
+  LDFLAGS =
   TARGET_EXT = .exe
 endif
 # Fallback for MSYS/Cygwin reporting MINGW/MSYS
@@ -56,7 +56,7 @@ SQLITE_CORE = src/btree.c src/btmutex.c \
               src/fault.c src/mem1.c
 
 # Library objects
-LIB_SRC = src/kvstore.c $(SQLITE_CORE)
+LIB_SRC = src/kvstore.c src/monocypher/monocypher.c $(SQLITE_CORE)
 LIB_OBJ = $(LIB_SRC:.c=.o)
 
 # Static library
@@ -73,7 +73,8 @@ TEST_SRC = tests/test_prod.c tests/test_columnfamily.c tests/test_benchmark.c \
            tests/test_checkpoint.c \
            tests/test_ttl.c \
            tests/test_iterator_reverse.c \
-           tests/test_new_apis.c
+           tests/test_new_apis.c \
+           tests/test_enc.c
 TEST_BIN = $(TEST_SRC:.c=$(TARGET_EXT))
 
 # ---- Example files ----

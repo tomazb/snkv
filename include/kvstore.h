@@ -55,6 +55,7 @@ typedef struct KVColumnFamily KVColumnFamily;
 #define KVSTORE_READONLY  8   /* attempt to write a read-only database */
 #define KVSTORE_CORRUPT   11  /* database file is malformed */
 #define KVSTORE_NOTFOUND  12  /* key or column family not found */
+#define KVSTORE_AUTH_FAILED 13 /* wrong password or corrupted encrypted store */
 #define KVSTORE_PROTOCOL  15  /* database lock protocol error */
 
 /*
@@ -1151,6 +1152,64 @@ int kvstore_cf_ttl_remaining(
 ** Equivalent to kvstore_purge_expired() but operates on an explicit CF handle.
 */
 int kvstore_cf_purge_expired(KVColumnFamily *pCF, int *pnDeleted);
+
+
+/* =========================================================================
+** Encryption API — password-based authenticated encryption (XChaCha20-Poly1305)
+** =========================================================================
+**
+** An encrypted store uses Argon2id to derive a 256-bit key from the password.
+** Every value is individually wrapped: [nonce(24)][ciphertext(N)][mac(16)].
+** Keys are stored in plaintext so all B-tree ordering, prefix, seek, range
+** and reverse-iteration operations work exactly as on unencrypted stores.
+**
+** Auth metadata (salt, KDF params, verify tag) is kept in a dedicated
+** internal column family "__snkv_auth__".  Opening an encrypted store with
+** the wrong password returns KVSTORE_AUTH_FAILED.
+*/
+
+/*
+** Open (or create) an encrypted key-value store.
+**
+**   zFilename  — path to the database file.
+**   pPassword  — raw password bytes.
+**   nPassword  — length of password in bytes.
+**   ppKV       — set to the open KVStore handle on success.
+**   pConfig    — optional config (may be NULL for defaults).
+**
+** If the file does not exist it is created and the password is written.
+** If the file exists the password is verified; KVSTORE_AUTH_FAILED is
+** returned on mismatch.  Returns KVSTORE_OK on success.
+*/
+int kvstore_open_encrypted(
+  const char *zFilename,
+  const void *pPassword, int nPassword,
+  KVStore **ppKV,
+  const KVStoreConfig *pConfig
+);
+
+/*
+** Return 1 if pKV was opened with encryption, 0 otherwise.
+*/
+int kvstore_is_encrypted(KVStore *pKV);
+
+/*
+** Re-key an encrypted store with a new password.
+** The store must currently be open with encryption (KVSTORE_AUTH_FAILED if
+** the current key is wrong; KVSTORE_ERROR if the store is not encrypted).
+** All data is re-encrypted in a single transaction.
+*/
+int kvstore_reencrypt(
+  KVStore *pKV,
+  const void *pNewPassword, int nNewPassword
+);
+
+/*
+** Remove encryption from a store, rewriting all values in plaintext.
+** The store must currently be open with encryption.
+** Returns KVSTORE_ERROR if the store is not encrypted.
+*/
+int kvstore_remove_encryption(KVStore *pKV);
 
 #ifdef __cplusplus
 }

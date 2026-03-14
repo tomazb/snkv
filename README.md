@@ -79,6 +79,37 @@ TTL is supported on both the default store and on column families. Expired keys 
 
 ---
 
+## Encryption
+
+SNKV has built-in at-rest encryption. Every value is encrypted with XChaCha20-Poly1305; passwords are stretched with Argon2id. All existing APIs work transparently on encrypted stores.
+
+```c
+/* C API */
+KVStore *db;
+kvstore_open_encrypted("mydb.db", "hunter2", 7, &db, NULL);
+
+kvstore_put(db, "secret", 6, "classified", 10);   /* encrypted transparently */
+
+void *val; int len;
+kvstore_get(db, "secret", 6, &val, &len);          /* decrypted on read */
+snkv_free(val);
+
+kvstore_reencrypt(db, "new-pass", 8);              /* change password in-place */
+kvstore_close(db);
+```
+
+```python
+# Python API
+with KVStore.open_encrypted("mydb.db", b"hunter2") as db:
+    db[b"secret"] = b"classified"       # encrypted transparently
+    print(db[b"secret"])                # b"classified" — decrypted on read
+    db.reencrypt(b"new-pass")           # change password in-place
+```
+
+**Cryptographic details:** XChaCha20-Poly1305 per value · Argon2id KDF (64 MB, 3 iterations) · 40-byte overhead per value · encryption key wiped from memory on close · wrong password returns `KVSTORE_AUTH_FAILED` / raises `AuthError`.
+
+---
+
 ## Configuration
 
 Use `kvstore_open_v2` to control how the store is opened. Zero-initialise the
@@ -282,6 +313,7 @@ If you want to benchmark SNKV against LMDB or RocksDB, the benchmark harnesses a
 - **ACID Transactions** — commit / rollback safety
 - **WAL Mode** — concurrent readers + single writer
 - **Native TTL** — per-key expiry with lazy eviction and `purge_expired()`; no background thread required
+- **Encryption** — per-value XChaCha20-Poly1305 with Argon2id key derivation; transparent to all existing APIs
 - **Column Families** — logical namespaces within a single database
 - **Iterators** — ordered key traversal
 - **Thread Safe** — built-in synchronization
@@ -322,6 +354,21 @@ I documented the SQLite internals explored while building this:
 - **Proven foundations** — reuse battle-tested storage, don't reinvent it
 - **Predictable performance** — no hidden query costs, no compaction stalls
 - **Honest tradeoffs** — SNKV is not the fastest at everything; it's optimized for its target use case
+
+---
+
+## Third-Party Licenses
+
+SNKV embeds the following third-party libraries:
+
+| Library | Version | License | Notes |
+|---------|---------|---------|-------|
+| [SQLite](https://www.sqlite.org/) | 3.x (amalgamation subset) | [Public Domain](https://www.sqlite.org/copyright.html) | B-tree, pager, WAL, OS layer |
+| [Monocypher](https://monocypher.org/) | 4.x | [CC0-1.0](https://creativecommons.org/publicdomain/zero/1.0/) (Public Domain) | XChaCha20-Poly1305 + Argon2id |
+
+These libraries are statically compiled into `libsnkv` and `snkv.h`. No dynamic linking or separate installation is required.
+
+Both SQLite and Monocypher are public domain — no attribution is legally required, but credit is given here in the spirit of good practice.
 
 ---
 
