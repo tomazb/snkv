@@ -36,6 +36,7 @@ static PyObject *SnkvBusyError;
 static PyObject *SnkvLockedError;
 static PyObject *SnkvReadOnlyError;
 static PyObject *SnkvCorruptError;
+static PyObject *SnkvAuthError;
 
 /* =====================================================================
 ** Internal helpers
@@ -60,8 +61,9 @@ snkv_raise_from(KVStore *db, int rc)
         case KVSTORE_BUSY:     exc = SnkvBusyError;     break;
         case KVSTORE_LOCKED:   exc = SnkvLockedError;   break;
         case KVSTORE_READONLY: exc = SnkvReadOnlyError; break;
-        case KVSTORE_CORRUPT:  exc = SnkvCorruptError;  break;
-        default:               exc = SnkvError;         break;
+        case KVSTORE_CORRUPT:      exc = SnkvCorruptError;  break;
+        case KVSTORE_AUTH_FAILED:  exc = SnkvAuthError;     break;
+        default:                   exc = SnkvError;         break;
     }
     PyErr_SetString(exc, msg);
     return NULL;
@@ -1608,6 +1610,89 @@ KVStore_purge_expired(KVStoreObject *self, PyObject *Py_UNUSED(ignored))
     return PyLong_FromLong(n_deleted);
 }
 
+/* =====================================================================
+** Encryption methods
+** ===================================================================== */
+
+/* KVStore.open_encrypted(filename, password) -- classmethod
+**   Open or create an encrypted key-value store.
+**   password must be bytes or str (str is UTF-8 encoded).
+*/
+static PyObject *
+KVStore_open_encrypted(PyTypeObject *type, PyObject *args, PyObject *kwds)
+{
+    static char *kwlist[] = {"filename", "password", NULL};
+    const char   *filename = NULL;
+    Py_buffer     pwbuf;
+    KVStore      *db = NULL;
+    KVStoreObject *self;
+    int            rc;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "zy*", kwlist,
+                                     &filename, &pwbuf))
+        return NULL;
+
+    Py_BEGIN_ALLOW_THREADS
+    rc = kvstore_open_encrypted(filename, pwbuf.buf, (int)pwbuf.len, &db, NULL);
+    Py_END_ALLOW_THREADS
+
+    PyBuffer_Release(&pwbuf);
+
+    if (rc != KVSTORE_OK) {
+        snkv_raise_from(db, rc);
+        if (db) { KVStore *tmp = db; Py_BEGIN_ALLOW_THREADS kvstore_close(tmp); Py_END_ALLOW_THREADS }
+        return NULL;
+    }
+
+    self = (KVStoreObject *)type->tp_alloc(type, 0);
+    if (!self) {
+        KVStore *tmp = db; Py_BEGIN_ALLOW_THREADS kvstore_close(tmp); Py_END_ALLOW_THREADS
+        return NULL;
+    }
+    self->db = db;
+    return (PyObject *)self;
+}
+
+/* KVStore.is_encrypted() -> bool */
+static PyObject *
+KVStore_is_encrypted(KVStoreObject *self, PyObject *Py_UNUSED(ignored))
+{
+    KV_CHECK_OPEN(self);
+    return PyBool_FromLong(kvstore_is_encrypted(self->db));
+}
+
+/* KVStore.reencrypt(new_password) -> None */
+static PyObject *
+KVStore_reencrypt(KVStoreObject *self, PyObject *args)
+{
+    Py_buffer pwbuf;
+    int rc;
+
+    KV_CHECK_OPEN(self);
+    if (!PyArg_ParseTuple(args, "y*", &pwbuf)) return NULL;
+
+    Py_BEGIN_ALLOW_THREADS
+    rc = kvstore_reencrypt(self->db, pwbuf.buf, (int)pwbuf.len);
+    Py_END_ALLOW_THREADS
+
+    PyBuffer_Release(&pwbuf);
+    if (rc != KVSTORE_OK) return snkv_raise_from(self->db, rc);
+    Py_RETURN_NONE;
+}
+
+/* KVStore.remove_encryption() -> None */
+static PyObject *
+KVStore_remove_encryption(KVStoreObject *self, PyObject *Py_UNUSED(ignored))
+{
+    int rc;
+    KV_CHECK_OPEN(self);
+    Py_BEGIN_ALLOW_THREADS
+    rc = kvstore_remove_encryption(self->db);
+    Py_END_ALLOW_THREADS
+    if (rc != KVSTORE_OK) return snkv_raise_from(self->db, rc);
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef KVStore_methods[] = {
     /* Class method */
     {"open_v2",          (PyCFunction)KVStore_open_v2,          METH_CLASS|METH_VARARGS|METH_KEYWORDS,
@@ -1656,6 +1741,13 @@ static PyMethodDef KVStore_methods[] = {
     {"get_ttl",          (PyCFunction)KVStore_get_ttl,           METH_VARARGS,  "get_ttl(key) -> (bytes, int)"},
     {"ttl_remaining",    (PyCFunction)KVStore_ttl_remaining,     METH_VARARGS,  "ttl_remaining(key) -> int"},
     {"purge_expired",    (PyCFunction)KVStore_purge_expired,     METH_NOARGS,   "purge_expired() -> int"},
+
+    /* Encryption */
+    {"open_encrypted",   (PyCFunction)KVStore_open_encrypted,    METH_CLASS|METH_VARARGS|METH_KEYWORDS,
+     "open_encrypted(filename, password) -> KVStore"},
+    {"is_encrypted",     (PyCFunction)KVStore_is_encrypted,      METH_NOARGS,   "is_encrypted() -> bool"},
+    {"reencrypt",        (PyCFunction)KVStore_reencrypt,         METH_VARARGS,  "reencrypt(new_password) -> None"},
+    {"remove_encryption",(PyCFunction)KVStore_remove_encryption, METH_NOARGS,   "remove_encryption() -> None"},
 
     /* Lifecycle */
     {"close",            (PyCFunction)KVStore_close,             METH_NOARGS,   "close() -> None"},
@@ -1750,6 +1842,11 @@ PyInit__snkv(void)
         "Database file is corrupt.", SnkvError, NULL);
     if (!SnkvCorruptError) goto error;
 
+    SnkvAuthError = PyErr_NewExceptionWithDoc(
+        "_snkv.AuthError",
+        "Wrong password or corrupted encrypted store.", SnkvError, NULL);
+    if (!SnkvAuthError) goto error;
+
     /* Add exceptions to module */
     Py_INCREF(SnkvError);
     if (PyModule_AddObject(m, "Error",         SnkvError)         < 0) goto error;
@@ -1763,6 +1860,8 @@ PyInit__snkv(void)
     if (PyModule_AddObject(m, "ReadOnlyError", SnkvReadOnlyError) < 0) goto error;
     Py_INCREF(SnkvCorruptError);
     if (PyModule_AddObject(m, "CorruptError",  SnkvCorruptError)  < 0) goto error;
+    Py_INCREF(SnkvAuthError);
+    if (PyModule_AddObject(m, "AuthError",     SnkvAuthError)     < 0) goto error;
 
     /* Add types */
     Py_INCREF(&KVStoreType);

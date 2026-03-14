@@ -41,6 +41,18 @@ emit() {
   echo ""
 }
 
+# emit_monocypher — like emit() but renames monocypher's internal i64/u64
+# typedefs to mc_i64/mc_u64 to avoid conflicts with SQLite's i64/u64.
+emit_monocypher() {
+  echo "/****** $1 ******/"
+  strip_local_includes < "$2" | sed \
+    -e 's/\btypedef int64_t  i64;\b/typedef int64_t  mc_i64;/' \
+    -e 's/\btypedef uint64_t u64;\b/typedef uint64_t mc_u64;/' \
+    -e 's/\bi64\b/mc_i64/g' \
+    -e 's/\bu64\b/mc_u64/g'
+  echo ""
+}
+
 # Emit a range of lines from a file (1-based, inclusive).
 # Usage: emit_lines FILE START END
 emit_lines() {
@@ -204,6 +216,21 @@ done
 echo "#define _KVSTORE_H_"
 echo ""
 
+# kvstore_enc.h defines the private crypto constants used by kvstore.c and
+# kvstore_enc.c.  Emit it now (before kvstore.c) so all symbols are visible.
+# Also define its include guard so the stripped #include "kvstore_enc.h" in
+# kvstore.c and kvstore_enc.c becomes a no-op.
+emit "src/kvstore_enc.h" "$CDIR/kvstore_enc.h"
+echo "#define KVSTORE_ENC_H"
+echo ""
+
+# monocypher.h provides the types (crypto_argon2_config etc.) needed by
+# kvstore_enc.c.  Emit it now; its include guard prevents re-emission
+# when monocypher.c itself is later processed.
+emit "src/monocypher/monocypher.h" "$CDIR/monocypher/monocypher.h"
+echo "#define MONOCYPHER_H"
+echo ""
+
 # --- Phase D: All .c source files ---
 SOURCES="
   global.c
@@ -232,12 +259,16 @@ SOURCES="
   btmutex.c
   status.c
   threads.c
+  kvstore_enc.c
   kvstore.c
 "
 
 for s in $SOURCES; do
   emit "src/$s" "$CDIR/$s"
 done
+
+# Monocypher is emitted with i64/u64 renamed to avoid SQLite typedef conflicts
+emit_monocypher "src/monocypher/monocypher.c" "$CDIR/monocypher/monocypher.c"
 
 # ============================================================
 # Part 3: Close the include guard

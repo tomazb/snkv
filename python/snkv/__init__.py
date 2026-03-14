@@ -40,6 +40,7 @@ from ._snkv import (
     LockedError,
     ReadOnlyError,
     CorruptError,
+    AuthError,
     JOURNAL_DELETE,
     JOURNAL_WAL,
     SYNC_OFF,
@@ -640,6 +641,60 @@ class KVStore:
         """Last error message string from the store."""
         return self._db.errmsg()
 
+    # --- Encryption ---
+
+    @classmethod
+    def open_encrypted(
+        cls,
+        path: Optional[str],
+        password: Union[str, bytes],
+    ) -> "KVStore":
+        """
+        Open or create a password-encrypted key-value store.
+
+        If the file does not exist, it is created and the password is written.
+        If the file exists, the password is verified; AuthError is raised on
+        mismatch.
+
+        All put/get/iterator/TTL operations work identically on encrypted stores;
+        encryption and decryption happen transparently in the C layer.
+
+        Example::
+
+            db = KVStore.open_encrypted("mydb.db", "s3cr3t")
+            db.put("user", "alice")
+            db.close()
+        """
+        pw = password.encode() if isinstance(password, str) else bytes(password)
+        obj = cls.__new__(cls)
+        obj._db = _KVStore.open_encrypted(path, pw)
+        return obj
+
+    def is_encrypted(self) -> bool:
+        """Return True if this store was opened with encryption."""
+        return self._db.is_encrypted()
+
+    def reencrypt(self, new_password: Union[str, bytes]) -> None:
+        """
+        Re-key the store with a new password.
+
+        All values are transparently re-encrypted inside a single transaction.
+        After this call the old password no longer works.
+        Raises AuthError if the store is not currently encrypted.
+        """
+        pw = new_password.encode() if isinstance(new_password, str) else bytes(new_password)
+        self._db.reencrypt(pw)
+
+    def remove_encryption(self) -> None:
+        """
+        Decrypt all values and convert the store to a plaintext (unencrypted) store.
+
+        After this call the store can be opened with the normal KVStore() constructor
+        without a password.
+        Raises Error if the store is not currently encrypted.
+        """
+        self._db.remove_encryption()
+
     # --- Lifecycle ---
 
     def close(self) -> None:
@@ -673,6 +728,7 @@ __all__ = [
     "LockedError",
     "ReadOnlyError",
     "CorruptError",
+    "AuthError",
     # Journal mode
     "JOURNAL_WAL",
     "JOURNAL_DELETE",
