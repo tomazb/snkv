@@ -216,18 +216,10 @@ done
 echo "#define _KVSTORE_H_"
 echo ""
 
-# kvstore_enc.h defines the private crypto constants used by kvstore.c and
-# kvstore_enc.c.  Emit it now (before kvstore.c) so all symbols are visible.
-# Also define its include guard so the stripped #include "kvstore_enc.h" in
-# kvstore.c and kvstore_enc.c becomes a no-op.
-emit "src/kvstore_enc.h" "$CDIR/kvstore_enc.h"
-echo "#define KVSTORE_ENC_H"
-echo ""
-
 # monocypher.h provides the types (crypto_argon2_config etc.) needed by
-# kvstore_enc.c.  Emit it now; its include guard prevents re-emission
-# when monocypher.c itself is later processed.
-emit "src/monocypher/monocypher.h" "$CDIR/monocypher/monocypher.h"
+# the encryption layer inlined in kvstore.c.  Emit it now; its include
+# guard prevents re-emission when monocypher.c itself is later processed.
+emit "include/monocypher/monocypher.h" "$INCDIR/monocypher/monocypher.h"
 echo "#define MONOCYPHER_H"
 echo ""
 
@@ -259,7 +251,6 @@ SOURCES="
   btmutex.c
   status.c
   threads.c
-  kvstore_enc.c
   kvstore.c
 "
 

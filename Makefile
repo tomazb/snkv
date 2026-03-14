@@ -3,7 +3,7 @@ CC ?= gcc
 # ---- Build mode ----
 BUILD ?= debug
 
-BASE_CFLAGS = -Wall -Iinclude -Isrc
+BASE_CFLAGS = -Wall -Iinclude
 
 ifeq ($(BUILD),debug)
   CFLAGS = $(BASE_CFLAGS) -g -O0 -DDEBUG
@@ -56,7 +56,7 @@ SQLITE_CORE = src/btree.c src/btmutex.c \
               src/fault.c src/mem1.c
 
 # Library objects
-LIB_SRC = src/kvstore.c src/kvstore_enc.c src/monocypher/monocypher.c $(SQLITE_CORE)
+LIB_SRC = src/kvstore.c src/monocypher/monocypher.c $(SQLITE_CORE)
 LIB_OBJ = $(LIB_SRC:.c=.o)
 
 # Static library

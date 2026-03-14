@@ -23,8 +23,134 @@
 */
 
 #include "kvstore.h"
-#include "kvstore_enc.h"
 #include "pager.h"
+
+/* =========================================================================
+** Encryption layer — inlined from kvstore_enc.c
+** ========================================================================= */
+
+#include "monocypher/monocypher.h"
+#include <stdint.h>
+
+/* Argon2id KDF parameters stored in the auth CF */
+#define SNKV_ENC_SALT_LEN     16
+#define SNKV_ENC_KEY_LEN      32
+#define SNKV_ENC_NONCE_LEN    24
+#define SNKV_ENC_MAC_LEN      16
+#define SNKV_ENC_OVERHEAD     40   /* NONCE_LEN + MAC_LEN */
+
+#define SNKV_ENC_M_COST   65536u   /* 64 MiB */
+#define SNKV_ENC_T_COST       3u
+
+#define SNKV_AUTH_CF_NAME    "__snkv_auth__"
+#define SNKV_AUTH_VERIFY     "SNKV_AUTH_V1"
+#define SNKV_AUTH_VERIFY_LEN 12
+#define SNKV_AUTH_KEY_SALT   "salt"
+#define SNKV_AUTH_KEY_PARAMS "params"
+#define SNKV_AUTH_KEY_VERIFY "verify"
+
+/* Platform RNG — used only for per-value nonce generation */
+#ifdef _WIN32
+#  define WIN32_LEAN_AND_MEAN
+#  include <windows.h>
+#  include <wincrypt.h>
+static int platformRandBytes(uint8_t *buf, size_t len){
+  HCRYPTPROV hProv = 0;
+  if( !CryptAcquireContextA(&hProv, NULL, NULL, PROV_RSA_FULL,
+                             CRYPT_VERIFYCONTEXT | CRYPT_SILENT) ){
+    return -1;
+  }
+  BOOL ok = CryptGenRandom(hProv, (DWORD)len, (BYTE *)buf);
+  CryptReleaseContext(hProv, 0);
+  return ok ? 0 : -1;
+}
+#elif defined(__linux__)
+#  include <sys/random.h>
+static int platformRandBytes(uint8_t *buf, size_t len){
+  size_t done = 0;
+  while( done < len ){
+    ssize_t r = getrandom(buf + done, len - done, 0);
+    if( r < 0 ) return -1;
+    done += (size_t)r;
+  }
+  return 0;
+}
+#else
+#  include <stdio.h>
+static int platformRandBytes(uint8_t *buf, size_t len){
+  FILE *f = fopen("/dev/urandom", "rb");
+  if( !f ) return -1;
+  size_t r = fread(buf, 1, len, f);
+  fclose(f);
+  return (r == len) ? 0 : -1;
+}
+#endif
+
+static void kvstoreEncWipe(void *p, size_t n){
+  crypto_wipe(p, n);
+}
+
+static int kvstoreEncDeriveKey(
+  uint8_t        aKey[SNKV_ENC_KEY_LEN],
+  const void    *pPassword, int nPassword,
+  const uint8_t  aSalt[SNKV_ENC_SALT_LEN],
+  uint32_t       mCost,
+  uint32_t       tCost
+){
+  size_t workSize = (size_t)mCost * 1024;
+  void  *pWork    = malloc(workSize);
+  if( !pWork ) return -1;
+
+  crypto_argon2_config cfg;
+  cfg.algorithm  = CRYPTO_ARGON2_ID;
+  cfg.nb_blocks  = mCost;
+  cfg.nb_passes  = tCost;
+  cfg.nb_lanes   = 1;
+
+  crypto_argon2_inputs inp;
+  inp.pass      = (const uint8_t *)pPassword;
+  inp.pass_size = (uint32_t)nPassword;
+  inp.salt      = aSalt;
+  inp.salt_size = SNKV_ENC_SALT_LEN;
+
+  crypto_argon2(aKey, SNKV_ENC_KEY_LEN, pWork, cfg, inp, crypto_argon2_no_extras);
+
+  crypto_wipe(pWork, workSize);
+  free(pWork);
+  return 0;
+}
+
+static int kvstoreEncEncrypt(
+  uint8_t       *pOut,
+  const uint8_t  aKey[SNKV_ENC_KEY_LEN],
+  const uint8_t *pPlain, int nPlain
+){
+  uint8_t *pNonce  = pOut;
+  if( platformRandBytes(pNonce, SNKV_ENC_NONCE_LEN) != 0 ) return -1;
+  uint8_t *pCipher = pOut + SNKV_ENC_NONCE_LEN;
+  uint8_t *pMac    = pCipher + nPlain;
+  crypto_aead_lock(pCipher, pMac, aKey, pNonce,
+                   NULL, 0, pPlain, (size_t)nPlain);
+  return 0;
+}
+
+static int kvstoreEncDecrypt(
+  uint8_t       *pOut,
+  const uint8_t  aKey[SNKV_ENC_KEY_LEN],
+  const uint8_t *pEnc, int nEnc
+){
+  if( nEnc < SNKV_ENC_OVERHEAD ) return -1;
+  const uint8_t *pNonce  = pEnc;
+  const uint8_t *pCipher = pEnc + SNKV_ENC_NONCE_LEN;
+  const uint8_t *pMac    = pEnc + (nEnc - SNKV_ENC_MAC_LEN);
+  int            nPlain  = nEnc - SNKV_ENC_OVERHEAD;
+  return crypto_aead_unlock(pOut, pMac, aKey, pNonce,
+                            NULL, 0, pCipher, (size_t)nPlain);
+}
+
+/* =========================================================================
+** End of encryption layer
+** ========================================================================= */
 #include <string.h>
 #include <assert.h>
 #include <stdio.h>
@@ -5480,13 +5606,10 @@ static int kvstoreEncSetupAuth(
   uint32_t tCost = SNKV_ENC_T_COST;
 
   if( isNew ){
-    /* Generate fresh salt */
-    if( kvstoreEncRandBytes(aSalt, SNKV_ENC_SALT_LEN) != 0 ){
-      kvstoreFreeCFStruct(pAuthCF);
-      kvstoreFinishWrite(pKV, autoTrans, KVSTORE_ERROR);
-      sqlite3_mutex_leave(pKV->pMutex);
-      return KVSTORE_ERROR;
-    }
+    /* Generate fresh salt via SQLite's cross-platform PRNG (seeded from OS entropy).
+    ** Salt only needs uniqueness per DB to prevent rainbow-table attacks —
+    ** sqlite3_randomness() is sufficient and avoids platform-specific #ifdefs. */
+    sqlite3_randomness(SNKV_ENC_SALT_LEN, aSalt);
     /* Store salt (plaintext) */
     rc = kvstoreRawBtreePut(pKV, pAuthCF->iTable,
                             SNKV_AUTH_KEY_SALT, (int)strlen(SNKV_AUTH_KEY_SALT),
@@ -5756,7 +5879,7 @@ int kvstore_reencrypt(
 
   /* Derive new key */
   uint8_t aSalt[SNKV_ENC_SALT_LEN];
-  if( kvstoreEncRandBytes(aSalt, SNKV_ENC_SALT_LEN) != 0 ) return KVSTORE_ERROR;
+  sqlite3_randomness(SNKV_ENC_SALT_LEN, aSalt);
 
   uint8_t aNewKey[SNKV_ENC_KEY_LEN];
   if( kvstoreEncDeriveKey(aNewKey, pNewPassword, nNewPassword,
