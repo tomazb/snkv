@@ -1330,7 +1330,7 @@ printf(<span class="str">"%d frames total, %d checkpointed\n"</span>, nLog, nCkp
   KVStore            **ppKV,
   <span class="kw">const</span> KVStoreConfig *pConfig      <span class="cm">/* may be NULL for defaults */</span>
 );</div>
-          <p class="fn-desc">Open or create an encrypted store. On a fresh file a new Argon2id-derived key is generated from the password. On an existing encrypted file the password is verified before access is granted. Returns <code>KVSTORE_AUTH_FAILED</code> if the password is wrong or if the file is a plain (non-encrypted) store with existing data. <code>*ppKV</code> is set to <code>NULL</code> on any error — no resource leak.</p>
+          <p class="fn-desc">Open or create an encrypted store. On a fresh file a new Argon2id-derived key is generated from the password. On an existing encrypted file the password is verified before access is granted. If the file is a plain (non-encrypted) store with existing data, all values are encrypted in-place using the supplied password — the store becomes fully encrypted transparently. Returns <code>KVSTORE_AUTH_FAILED</code> only if the password is wrong on an already-encrypted file. <code>*ppKV</code> is set to <code>NULL</code> on any error — no resource leak.</p>
           <pre><span class="cm">/* Create / open encrypted */</span>
 KVStore *kv = <span class="kw">NULL</span>;
 <span class="kw">int</span> rc = <span class="fn">kvstore_open_encrypted</span>(<span class="str">"mydb.db"</span>, <span class="str">"hunter2"</span>, <span class="nm">7</span>, &amp;kv, <span class="kw">NULL</span>);
@@ -1457,7 +1457,8 @@ python3 setup.py build_ext --inplace</pre>
 ├── <span class="nm">snkv.BusyError</span>
 ├── <span class="nm">snkv.LockedError</span>
 ├── <span class="nm">snkv.ReadOnlyError</span>
-└── <span class="nm">snkv.CorruptError</span></pre>
+├── <span class="nm">snkv.CorruptError</span>
+└── <span class="nm">snkv.AuthError</span></pre>
         <div class="table-wrap"><table>
           <tr><th>Exception</th><th>Raised when</th></tr>
           <tr><td><code>Error</code></td><td>Generic SNKV error (base class).</td></tr>
@@ -1466,6 +1467,7 @@ python3 setup.py build_ext --inplace</pre>
           <tr><td><code>LockedError</code></td><td>Write lock conflict with a concurrent transaction.</td></tr>
           <tr><td><code>ReadOnlyError</code></td><td>Write attempted on a read-only store.</td></tr>
           <tr><td><code>CorruptError</code></td><td>Integrity check detected corruption.</td></tr>
+          <tr><td><code>AuthError</code></td><td>Wrong password supplied to an encrypted store.</td></tr>
         </table></div>
       </section>
 
@@ -1794,6 +1796,7 @@ cf.<span class="fn">count</span>() → int                                  <spa
             <tr><td><code>cf["key", ttl] = "val"</code></td><td>TTL in seconds.</td></tr>
             <tr><td><code>del cf["key"]</code></td><td>Raises <code>NotFoundError</code> on miss.</td></tr>
             <tr><td><code>"key" in cf</code></td><td>Existence check.</td></tr>
+            <tr><td><code>for k, v in cf</code></td><td>Forward iteration over all keys.</td></tr>
           </table></div>
           <pre>cf[<span class="str">"alice"</span>] = <span class="str">"admin"</span>
 cf[<span class="str">"session:u42"</span>, <span class="nm">300</span>] = <span class="str">"logged-in"</span>
@@ -1908,7 +1911,7 @@ key = db.<span class="fn">iterator</span>().<span class="fn">seek</span>(<span c
 db.<span class="fn">is_encrypted</span>() → bool
 db.<span class="fn">reencrypt</span>(new_password)
 db.<span class="fn">remove_encryption</span>()</div>
-          <p class="fn-desc"><code>open_encrypted</code> is a class method that opens or creates an encrypted store. <code>password</code> may be <code>bytes</code> or <code>str</code> (UTF-8 encoded). Accepts the same keyword arguments as the <code>KVStore</code> constructor. Raises <code>AuthError</code> on wrong password.</p>
+          <p class="fn-desc"><code>open_encrypted</code> is a class method that opens or creates an encrypted store. <code>password</code> may be <code>bytes</code> or <code>str</code> (UTF-8 encoded). If the file is a plain store with existing data, all values are encrypted in-place and the store becomes encrypted — existing data is preserved. Raises <code>AuthError</code> only on a wrong password for an already-encrypted store.</p>
           <pre><span class="kw">from</span> snkv <span class="kw">import</span> KVStore, AuthError
 
 <span class="cm"># Create / open encrypted store</span>
@@ -1931,9 +1934,14 @@ db.<span class="fn">remove_encryption</span>()</div>
 <span class="kw">with</span> KVStore.<span class="fn">open_encrypted</span>(<span class="str">"mydb.db"</span>, <span class="str">b"new-strong-pass"</span>) <span class="kw">as</span> db:
     db.<span class="fn">remove_encryption</span>()
 <span class="kw">with</span> KVStore(<span class="str">"mydb.db"</span>) <span class="kw">as</span> db:   <span class="cm"># plain open works now</span>
-    print(db[<span class="str">b"secret"</span>])</pre>
+    print(db[<span class="str">b"secret"</span>])
+
+<span class="cm"># open_encrypted on a plain store — encrypts it in-place</span>
+<span class="kw">with</span> KVStore.<span class="fn">open_encrypted</span>(<span class="str">"mydb.db"</span>, <span class="str">b"fresh-pass"</span>) <span class="kw">as</span> db:
+    print(db.<span class="fn">is_encrypted</span>())   <span class="cm"># True — store is now encrypted</span>
+    print(db[<span class="str">b"secret"</span>])        <span class="cm"># b"classified" — data preserved</span></pre>
         </div>
-        <div class="note" style="margin-top:0.75rem;"><strong>AuthError</strong> is a subclass of <code>snkv.Error</code> raised when a wrong password is supplied or when <code>open_encrypted</code> is called on a non-encrypted file that already contains data.</div>
+        <div class="note" style="margin-top:0.75rem;"><strong>AuthError</strong> is a subclass of <code>snkv.Error</code> raised when a wrong password is supplied to an already-encrypted store. Calling <code>open_encrypted</code> on a plain store encrypts it in-place instead of raising <code>AuthError</code>.</div>
       </section>
 
     </div><!-- /panel-py -->
