@@ -49,42 +49,12 @@
 #define SNKV_AUTH_KEY_PARAMS "params"
 #define SNKV_AUTH_KEY_VERIFY "verify"
 
-/* Platform RNG — used only for per-value nonce generation */
-#ifdef _WIN32
-#  define WIN32_LEAN_AND_MEAN
-#  include <windows.h>
-#  include <wincrypt.h>
+/* RNG — used only for per-value nonce generation.
+** sqlite3_randomness() is seeded from OS entropy and works on all platforms. */
 static int platformRandBytes(uint8_t *buf, size_t len){
-  HCRYPTPROV hProv = 0;
-  if( !CryptAcquireContextA(&hProv, NULL, NULL, PROV_RSA_FULL,
-                             CRYPT_VERIFYCONTEXT | CRYPT_SILENT) ){
-    return -1;
-  }
-  BOOL ok = CryptGenRandom(hProv, (DWORD)len, (BYTE *)buf);
-  CryptReleaseContext(hProv, 0);
-  return ok ? 0 : -1;
-}
-#elif defined(__linux__) && defined(__has_include) && __has_include(<sys/random.h>)
-#  include <sys/random.h>
-static int platformRandBytes(uint8_t *buf, size_t len){
-  size_t done = 0;
-  while( done < len ){
-    ssize_t r = getrandom(buf + done, len - done, 0);
-    if( r < 0 ) return -1;
-    done += (size_t)r;
-  }
+  sqlite3_randomness((int)len, buf);
   return 0;
 }
-#else
-#  include <stdio.h>
-static int platformRandBytes(uint8_t *buf, size_t len){
-  FILE *f = fopen("/dev/urandom", "rb");
-  if( !f ) return -1;
-  size_t r = fread(buf, 1, len, f);
-  fclose(f);
-  return (r == len) ? 0 : -1;
-}
-#endif
 
 static void kvstoreEncWipe(void *p, size_t n){
   crypto_wipe(p, n);
