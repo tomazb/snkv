@@ -23,6 +23,13 @@
 ** 18.  is_encrypted() returns 0 on plain store
 ** 19.  kvstore_open_encrypted on non-encrypted file → KVSTORE_AUTH_FAILED
 ** 20.  Empty value round-trip on encrypted store
+** 21.  Plain open of encrypted store returns garbled values
+** 22.  Full functionality after kvstore_reencrypt (put/get/delete/exists/
+**      iterator/reverse/prefix/seek/TTL/purge/CF/put_if_absent/count)
+** 23.  Full functionality after kvstore_remove_encryption (same coverage)
+** 24.  remove_encryption → kvstore_open_encrypted (re-encrypt) → full
+**      functionality (put/get/delete/exists/iterator/reverse/prefix/seek/
+**      TTL/purge/CF/put_if_absent/count + old password fails/new works)
 */
 
 #include "kvstore.h"
@@ -50,6 +57,11 @@ static char gTmpPath[256];
 static int  gTmpIdx = 0;
 static const char *tmpdb(void){
   snprintf(gTmpPath, sizeof(gTmpPath), "tests/enc_test_%d.db", gTmpIdx++);
+  /* Pre-remove any leftover files from a previous crashed run */
+  char buf[300];
+  remove(gTmpPath);
+  snprintf(buf, sizeof(buf), "%s-wal", gTmpPath); remove(buf);
+  snprintf(buf, sizeof(buf), "%s-shm", gTmpPath); remove(buf);
   return gTmpPath;
 }
 
@@ -437,19 +449,36 @@ static void test_is_encrypted_plain(void){
   rmdb(path);
 }
 
-/* ---- Test 19: open_encrypted on plain file → AUTH_FAILED ---- */
+/* ---- Test 19: open_encrypted on plain file → encrypts the store ---- */
 static void test_open_enc_on_plain(void){
-  printf("Test 19: open_encrypted on plain file → AUTH_FAILED\n");
+  printf("Test 19: open_encrypted on plain file → encrypts store\n");
   const char *path = tmpdb();
   KVStore *db = NULL;
   kvstore_open(path, &db, KVSTORE_JOURNAL_WAL);
   kvstore_put(db, "k", 1, "v", 1);
   kvstore_close(db);
 
+  /* open_encrypted on a plain store: encrypts the existing data */
   db = NULL;
   int rc = kvstore_open_encrypted(path, "pw", 2, &db, NULL);
-  ASSERT("open_encrypted on plain → AUTH_FAILED", rc == KVSTORE_AUTH_FAILED);
+  ASSERT("open_encrypted on plain store ok", rc == KVSTORE_OK);
+  ASSERT("is_encrypted == 1", kvstore_is_encrypted(db) == 1);
+  void *val = NULL; int nval = 0;
+  rc = kvstore_get(db, "k", 1, &val, &nval);
+  ASSERT("pre-existing key readable after encrypt", rc == KVSTORE_OK);
+  ASSERT("pre-existing value correct", val && nval == 1 && ((char*)val)[0] == 'v');
+  if( val ){ snkv_free(val); val = NULL; }
+  kvstore_close(db); db = NULL;
+
+  /* old password must fail */
+  rc = kvstore_open_encrypted(path, "wrong", 5, &db, NULL);
+  ASSERT("wrong password fails", rc == KVSTORE_AUTH_FAILED);
   if( db ){ kvstore_close(db); db = NULL; }
+
+  /* correct password reopens fine */
+  rc = kvstore_open_encrypted(path, "pw", 2, &db, NULL);
+  ASSERT("correct password reopens ok", rc == KVSTORE_OK);
+  kvstore_close(db); db = NULL;
   rmdb(path);
 }
 
@@ -508,6 +537,519 @@ static void test_plain_open_returns_garbage(void){
   rmdb(path);
 }
 
+/* ---- Test 22: full functionality after reencrypt ---- */
+static void test_reencrypt_full_functionality(void){
+  printf("Test 22: full functionality after reencrypt\n");
+  const char *path = tmpdb();
+  KVStore *db = NULL;
+  kvstore_open_encrypted(path, "pass1", 5, &db, NULL);
+
+  /* Write data before reencrypt */
+  kvstore_put(db, "k1", 2, "v1", 2);
+  kvstore_put(db, "k2", 2, "v2", 2);
+  kvstore_put(db, "k3", 2, "v3", 2);
+
+  /* TTL before reencrypt */
+  int64_t expire = kvstore_now_ms() + 10000;
+  kvstore_put_ttl(db, "ttlkey", 6, "ttlval", 6, expire);
+
+  /* Column family before reencrypt */
+  KVColumnFamily *cf = NULL;
+  kvstore_cf_create(db, "myCF", &cf);
+  kvstore_cf_put(cf, "cfk", 3, "cfv", 3);
+
+  /* Reencrypt with new password */
+  int rc = kvstore_reencrypt(db, "pass2", 5);
+  ASSERT("reencrypt ok", rc == KVSTORE_OK);
+
+  /* --- put / get --- */
+  rc = kvstore_put(db, "k4", 2, "v4", 2);
+  ASSERT("put after reencrypt ok", rc == KVSTORE_OK);
+
+  void *val = NULL; int nval = 0;
+  rc = kvstore_get(db, "k1", 2, &val, &nval);
+  ASSERT("get pre-reencrypt key ok", rc == KVSTORE_OK);
+  ASSERT("pre-reencrypt value correct", val && nval == 2 && memcmp(val, "v1", 2) == 0);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  rc = kvstore_get(db, "k4", 2, &val, &nval);
+  ASSERT("get post-reencrypt key ok", rc == KVSTORE_OK);
+  ASSERT("post-reencrypt value correct", val && nval == 2 && memcmp(val, "v4", 2) == 0);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  /* --- delete --- */
+  rc = kvstore_delete(db, "k2", 2);
+  ASSERT("delete after reencrypt ok", rc == KVSTORE_OK);
+  rc = kvstore_get(db, "k2", 2, &val, &nval);
+  ASSERT("deleted key gone", rc == KVSTORE_NOTFOUND);
+
+  /* --- exists --- */
+  int exists = 0;
+  kvstore_exists(db, "k1", 2, &exists);
+  ASSERT("exists ok after reencrypt", exists == 1);
+  kvstore_exists(db, "k2", 2, &exists);
+  ASSERT("deleted key not exists", exists == 0);
+
+  /* --- iterator --- */
+  KVIterator *it = NULL;
+  kvstore_iterator_create(db, &it);
+  kvstore_iterator_first(it);
+  int count = 0;
+  while( !kvstore_iterator_eof(it) ){ count++; kvstore_iterator_next(it); }
+  kvstore_iterator_close(it);
+  ASSERT("iterator count correct after reencrypt", count == 4); /* k1,k3,k4,ttlkey */
+
+  /* --- reverse iterator --- */
+  kvstore_reverse_iterator_create(db, &it);
+  kvstore_iterator_last(it);
+  void *rk = NULL; int nrk = 0;
+  kvstore_iterator_key(it, &rk, &nrk);
+  ASSERT("reverse iterator ok after reencrypt", nrk > 0);
+  kvstore_iterator_close(it);
+
+  /* --- prefix iterator --- */
+  kvstore_put(db, "pfx:a", 5, "pa", 2);
+  kvstore_put(db, "pfx:b", 5, "pb", 2);
+  kvstore_prefix_iterator_create(db, "pfx:", 4, &it);
+  kvstore_iterator_first(it);
+  int pfxCount = 0;
+  while( !kvstore_iterator_eof(it) ){ pfxCount++; kvstore_iterator_next(it); }
+  kvstore_iterator_close(it);
+  ASSERT("prefix iterator ok after reencrypt", pfxCount == 2);
+
+  /* --- seek --- */
+  kvstore_iterator_create(db, &it);
+  kvstore_iterator_seek(it, "k3", 2);
+  void *sk = NULL; int nsk = 0;
+  kvstore_iterator_key(it, &sk, &nsk);
+  ASSERT("seek ok after reencrypt", nsk == 2 && memcmp(sk, "k3", 2) == 0);
+  kvstore_iterator_close(it);
+
+  /* --- TTL: pre-reencrypt key still readable --- */
+  int64_t remaining = 0;
+  rc = kvstore_get_ttl(db, "ttlkey", 6, &val, &nval, &remaining);
+  ASSERT("ttl get after reencrypt ok", rc == KVSTORE_OK);
+  ASSERT("ttl value correct after reencrypt", val && nval == 6 && memcmp(val, "ttlval", 6) == 0);
+  ASSERT("ttl remaining > 0 after reencrypt", remaining > 0);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  /* --- TTL: new key with TTL after reencrypt --- */
+  int64_t expire2 = kvstore_now_ms() + 8000;
+  rc = kvstore_put_ttl(db, "newttl", 6, "nv", 2, expire2);
+  ASSERT("put_ttl after reencrypt ok", rc == KVSTORE_OK);
+  rc = kvstore_get_ttl(db, "newttl", 6, &val, &nval, &remaining);
+  ASSERT("get_ttl new key after reencrypt ok", rc == KVSTORE_OK);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  /* --- TTL: expired key --- */
+  kvstore_put_ttl(db, "expk", 4, "ev", 2, kvstore_now_ms() - 1);
+  rc = kvstore_get_ttl(db, "expk", 4, &val, &nval, &remaining);
+  ASSERT("expired key NOTFOUND after reencrypt", rc == KVSTORE_NOTFOUND);
+
+  /* --- purge_expired --- */
+  kvstore_put_ttl(db, "p1", 2, "pv1", 3, kvstore_now_ms() - 100);
+  kvstore_put_ttl(db, "p2", 2, "pv2", 3, kvstore_now_ms() - 100);
+  int nDeleted = 0;
+  rc = kvstore_purge_expired(db, &nDeleted);
+  ASSERT("purge_expired after reencrypt ok", rc == KVSTORE_OK);
+  ASSERT("purge_expired count >= 2 after reencrypt", nDeleted >= 2);
+
+  /* --- count --- */
+  int64_t cnt = 0;
+  kvstore_count(db, &cnt);
+  ASSERT("count > 0 after reencrypt", cnt > 0);
+
+  /* --- column family: pre-reencrypt CF data readable --- */
+  rc = kvstore_cf_get(cf, "cfk", 3, &val, &nval);
+  ASSERT("cf get after reencrypt ok", rc == KVSTORE_OK);
+  ASSERT("cf value correct after reencrypt", val && nval == 3 && memcmp(val, "cfv", 3) == 0);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  /* --- column family: new write after reencrypt --- */
+  rc = kvstore_cf_put(cf, "cfk2", 4, "cfv2", 4);
+  ASSERT("cf put after reencrypt ok", rc == KVSTORE_OK);
+  rc = kvstore_cf_get(cf, "cfk2", 4, &val, &nval);
+  ASSERT("cf get new key after reencrypt ok", rc == KVSTORE_OK);
+  ASSERT("cf new value correct after reencrypt", val && nval == 4 && memcmp(val, "cfv2", 4) == 0);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  /* --- put_if_absent after reencrypt --- */
+  int inserted = 0;
+  rc = kvstore_put_if_absent(db, "k1", 2, "new", 3, 0, &inserted);
+  ASSERT("put_if_absent existing key returns KVSTORE_OK (not inserted)", rc == KVSTORE_OK);
+  ASSERT("put_if_absent existing key not inserted", inserted == 0);
+  rc = kvstore_get(db, "k1", 2, &val, &nval);
+  ASSERT("existing key unchanged by put_if_absent", val && nval == 2 && memcmp(val, "v1", 2) == 0);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  rc = kvstore_put_if_absent(db, "brand_new", 9, "bv", 2, 0, &inserted);
+  ASSERT("put_if_absent new key ok", rc == KVSTORE_OK);
+  ASSERT("put_if_absent new key inserted", inserted == 1);
+  rc = kvstore_get(db, "brand_new", 9, &val, &nval);
+  ASSERT("put_if_absent new key readable", rc == KVSTORE_OK);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  /* --- is_encrypted still 1 after reencrypt --- */
+  ASSERT("is_encrypted still 1 after reencrypt", kvstore_is_encrypted(db) == 1);
+
+  kvstore_cf_close(cf);
+  kvstore_close(db);
+
+  /* Reopen with new password and verify a sample key */
+  db = NULL;
+  rc = kvstore_open_encrypted(path, "pass2", 5, &db, NULL);
+  ASSERT("reopen with new password ok", rc == KVSTORE_OK);
+  rc = kvstore_get(db, "k1", 2, &val, &nval);
+  ASSERT("k1 readable after reopen with new password", rc == KVSTORE_OK);
+  if( val ){ snkv_free(val); val = NULL; }
+  kvstore_close(db);
+
+  rmdb(path);
+}
+
+/* ---- Test 23: full functionality after remove_encryption ---- */
+static void test_remove_encryption_full_functionality(void){
+  printf("Test 23: full functionality after remove_encryption\n");
+  const char *path = tmpdb();
+  KVStore *db = NULL;
+  kvstore_open_encrypted(path, "pw", 2, &db, NULL);
+
+  /* Write data before remove_encryption */
+  kvstore_put(db, "k1", 2, "v1", 2);
+  kvstore_put(db, "k2", 2, "v2", 2);
+  kvstore_put(db, "k3", 2, "v3", 2);
+
+  /* TTL before remove_encryption */
+  int64_t expire = kvstore_now_ms() + 10000;
+  kvstore_put_ttl(db, "ttlkey", 6, "ttlval", 6, expire);
+
+  /* Column family before remove_encryption */
+  KVColumnFamily *cf = NULL;
+  kvstore_cf_create(db, "myCF", &cf);
+  kvstore_cf_put(cf, "cfk", 3, "cfv", 3);
+
+  /* Remove encryption */
+  int rc = kvstore_remove_encryption(db);
+  ASSERT("remove_encryption ok", rc == KVSTORE_OK);
+  ASSERT("is_encrypted == 0 after remove", kvstore_is_encrypted(db) == 0);
+
+  /* --- put / get --- */
+  rc = kvstore_put(db, "k4", 2, "v4", 2);
+  ASSERT("put after remove_encryption ok", rc == KVSTORE_OK);
+
+  void *val = NULL; int nval = 0;
+  rc = kvstore_get(db, "k1", 2, &val, &nval);
+  ASSERT("get pre-remove key ok", rc == KVSTORE_OK);
+  ASSERT("pre-remove value correct", val && nval == 2 && memcmp(val, "v1", 2) == 0);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  rc = kvstore_get(db, "k4", 2, &val, &nval);
+  ASSERT("get post-remove key ok", rc == KVSTORE_OK);
+  ASSERT("post-remove value correct", val && nval == 2 && memcmp(val, "v4", 2) == 0);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  /* --- delete --- */
+  rc = kvstore_delete(db, "k2", 2);
+  ASSERT("delete after remove_encryption ok", rc == KVSTORE_OK);
+  rc = kvstore_get(db, "k2", 2, &val, &nval);
+  ASSERT("deleted key gone after remove_encryption", rc == KVSTORE_NOTFOUND);
+
+  /* --- exists --- */
+  int exists = 0;
+  kvstore_exists(db, "k1", 2, &exists);
+  ASSERT("exists ok after remove_encryption", exists == 1);
+
+  /* --- iterator --- */
+  KVIterator *it = NULL;
+  kvstore_iterator_create(db, &it);
+  kvstore_iterator_first(it);
+  int count = 0;
+  while( !kvstore_iterator_eof(it) ){ count++; kvstore_iterator_next(it); }
+  kvstore_iterator_close(it);
+  ASSERT("iterator count correct after remove_encryption", count == 4); /* k1,k3,k4,ttlkey */
+
+  /* --- reverse iterator --- */
+  kvstore_reverse_iterator_create(db, &it);
+  kvstore_iterator_last(it);
+  void *rk = NULL; int nrk = 0;
+  kvstore_iterator_key(it, &rk, &nrk);
+  ASSERT("reverse iterator ok after remove_encryption", nrk > 0);
+  kvstore_iterator_close(it);
+
+  /* --- prefix iterator --- */
+  kvstore_put(db, "pfx:a", 5, "pa", 2);
+  kvstore_put(db, "pfx:b", 5, "pb", 2);
+  kvstore_prefix_iterator_create(db, "pfx:", 4, &it);
+  kvstore_iterator_first(it);
+  int pfxCount = 0;
+  while( !kvstore_iterator_eof(it) ){ pfxCount++; kvstore_iterator_next(it); }
+  kvstore_iterator_close(it);
+  ASSERT("prefix iterator ok after remove_encryption", pfxCount == 2);
+
+  /* --- seek --- */
+  kvstore_iterator_create(db, &it);
+  kvstore_iterator_seek(it, "k3", 2);
+  void *sk = NULL; int nsk = 0;
+  kvstore_iterator_key(it, &sk, &nsk);
+  ASSERT("seek ok after remove_encryption", nsk == 2 && memcmp(sk, "k3", 2) == 0);
+  kvstore_iterator_close(it);
+
+  /* --- TTL: pre-remove key still readable --- */
+  int64_t remaining = 0;
+  rc = kvstore_get_ttl(db, "ttlkey", 6, &val, &nval, &remaining);
+  ASSERT("ttl get after remove_encryption ok", rc == KVSTORE_OK);
+  ASSERT("ttl value correct after remove_encryption", val && nval == 6 && memcmp(val, "ttlval", 6) == 0);
+  ASSERT("ttl remaining > 0 after remove_encryption", remaining > 0);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  /* --- TTL: new key with TTL after remove_encryption --- */
+  int64_t expire2 = kvstore_now_ms() + 8000;
+  rc = kvstore_put_ttl(db, "newttl", 6, "nv", 2, expire2);
+  ASSERT("put_ttl after remove_encryption ok", rc == KVSTORE_OK);
+  rc = kvstore_get_ttl(db, "newttl", 6, &val, &nval, &remaining);
+  ASSERT("get_ttl new key after remove_encryption ok", rc == KVSTORE_OK);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  /* --- TTL: expired key --- */
+  kvstore_put_ttl(db, "expk", 4, "ev", 2, kvstore_now_ms() - 1);
+  rc = kvstore_get_ttl(db, "expk", 4, &val, &nval, &remaining);
+  ASSERT("expired key NOTFOUND after remove_encryption", rc == KVSTORE_NOTFOUND);
+
+  /* --- purge_expired --- */
+  kvstore_put_ttl(db, "p1", 2, "pv1", 3, kvstore_now_ms() - 100);
+  kvstore_put_ttl(db, "p2", 2, "pv2", 3, kvstore_now_ms() - 100);
+  int nDeleted = 0;
+  rc = kvstore_purge_expired(db, &nDeleted);
+  ASSERT("purge_expired after remove_encryption ok", rc == KVSTORE_OK);
+  ASSERT("purge_expired count >= 2 after remove_encryption", nDeleted >= 2);
+
+  /* --- count --- */
+  int64_t cnt = 0;
+  kvstore_count(db, &cnt);
+  ASSERT("count > 0 after remove_encryption", cnt > 0);
+
+  /* --- column family: pre-remove CF data readable --- */
+  rc = kvstore_cf_get(cf, "cfk", 3, &val, &nval);
+  ASSERT("cf get after remove_encryption ok", rc == KVSTORE_OK);
+  ASSERT("cf value correct after remove_encryption", val && nval == 3 && memcmp(val, "cfv", 3) == 0);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  /* --- column family: new write after remove_encryption --- */
+  rc = kvstore_cf_put(cf, "cfk2", 4, "cfv2", 4);
+  ASSERT("cf put after remove_encryption ok", rc == KVSTORE_OK);
+  rc = kvstore_cf_get(cf, "cfk2", 4, &val, &nval);
+  ASSERT("cf get new key after remove_encryption ok", rc == KVSTORE_OK);
+  ASSERT("cf new value correct after remove_encryption", val && nval == 4 && memcmp(val, "cfv2", 4) == 0);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  /* --- put_if_absent after remove_encryption --- */
+  int inserted = 0;
+  rc = kvstore_put_if_absent(db, "k1", 2, "new", 3, 0, &inserted);
+  ASSERT("put_if_absent existing key unchanged", rc == KVSTORE_OK);
+  ASSERT("put_if_absent existing key not inserted", inserted == 0);
+  rc = kvstore_get(db, "k1", 2, &val, &nval);
+  ASSERT("existing key not overwritten by put_if_absent", val && nval == 2 && memcmp(val, "v1", 2) == 0);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  rc = kvstore_put_if_absent(db, "brand_new", 9, "bv", 2, 0, &inserted);
+  ASSERT("put_if_absent new key ok after remove_encryption", rc == KVSTORE_OK);
+  ASSERT("put_if_absent new key inserted", inserted == 1);
+  rc = kvstore_get(db, "brand_new", 9, &val, &nval);
+  ASSERT("put_if_absent new key readable after remove_encryption", rc == KVSTORE_OK);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  kvstore_cf_close(cf);
+  kvstore_close(db);
+
+  /* Reopen as plain store and verify key is readable */
+  db = NULL;
+  rc = kvstore_open(path, &db, KVSTORE_JOURNAL_WAL);
+  ASSERT("plain reopen after remove_encryption ok", rc == KVSTORE_OK);
+  rc = kvstore_get(db, "k1", 2, &val, &nval);
+  ASSERT("k1 readable on plain reopen", rc == KVSTORE_OK);
+  ASSERT("k1 value correct on plain reopen", val && nval == 2 && memcmp(val, "v1", 2) == 0);
+  if( val ){ snkv_free(val); val = NULL; }
+  kvstore_close(db);
+
+  rmdb(path);
+}
+
+/* ---- Test 24: remove_encryption then re-encrypt with open_encrypted ---- */
+static void test_remove_then_reencrypt_full_functionality(void){
+  printf("Test 24: remove_encryption → open_encrypted → full functionality\n");
+  const char *path = tmpdb();
+  KVStore *db = NULL;
+  kvstore_open_encrypted(path, "first", 5, &db, NULL);
+
+  /* Write data in first encrypted session */
+  kvstore_put(db, "k1", 2, "v1", 2);
+  kvstore_put(db, "k2", 2, "v2", 2);
+  kvstore_put(db, "k3", 2, "v3", 2);
+
+  int64_t expire = kvstore_now_ms() + 10000;
+  kvstore_put_ttl(db, "ttlkey", 6, "ttlval", 6, expire);
+
+  KVColumnFamily *cf = NULL;
+  kvstore_cf_create(db, "myCF", &cf);
+  kvstore_cf_put(cf, "cfk", 3, "cfv", 3);
+  kvstore_cf_close(cf); cf = NULL;
+
+  /* Step 1: remove encryption → plaintext */
+  int rc = kvstore_remove_encryption(db);
+  ASSERT("remove_encryption ok", rc == KVSTORE_OK);
+  ASSERT("is_encrypted == 0 after remove", kvstore_is_encrypted(db) == 0);
+  kvstore_close(db); db = NULL;
+
+  /* Step 2: re-open with open_encrypted → re-encrypts the store */
+  rc = kvstore_open_encrypted(path, "second", 6, &db, NULL);
+  ASSERT("open_encrypted on plain store ok", rc == KVSTORE_OK);
+  ASSERT("is_encrypted == 1 after re-encrypt", kvstore_is_encrypted(db) == 1);
+
+  /* --- put / get --- */
+  rc = kvstore_put(db, "k4", 2, "v4", 2);
+  ASSERT("put after re-encrypt ok", rc == KVSTORE_OK);
+
+  void *val = NULL; int nval = 0;
+  rc = kvstore_get(db, "k1", 2, &val, &nval);
+  ASSERT("get pre-remove key ok", rc == KVSTORE_OK);
+  ASSERT("pre-remove value correct", val && nval == 2 && memcmp(val, "v1", 2) == 0);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  rc = kvstore_get(db, "k4", 2, &val, &nval);
+  ASSERT("get post-re-encrypt key ok", rc == KVSTORE_OK);
+  ASSERT("post-re-encrypt value correct", val && nval == 2 && memcmp(val, "v4", 2) == 0);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  /* --- delete --- */
+  rc = kvstore_delete(db, "k2", 2);
+  ASSERT("delete after re-encrypt ok", rc == KVSTORE_OK);
+  rc = kvstore_get(db, "k2", 2, &val, &nval);
+  ASSERT("deleted key gone", rc == KVSTORE_NOTFOUND);
+
+  /* --- exists --- */
+  int exists = 0;
+  kvstore_exists(db, "k1", 2, &exists);
+  ASSERT("exists ok after re-encrypt", exists == 1);
+  kvstore_exists(db, "k2", 2, &exists);
+  ASSERT("deleted key not exists", exists == 0);
+
+  /* --- iterator --- */
+  KVIterator *it = NULL;
+  kvstore_iterator_create(db, &it);
+  kvstore_iterator_first(it);
+  int count = 0;
+  while( !kvstore_iterator_eof(it) ){ count++; kvstore_iterator_next(it); }
+  kvstore_iterator_close(it);
+  ASSERT("iterator count correct after re-encrypt", count == 4); /* k1,k3,k4,ttlkey */
+
+  /* --- reverse iterator --- */
+  kvstore_reverse_iterator_create(db, &it);
+  kvstore_iterator_last(it);
+  void *rk = NULL; int nrk = 0;
+  kvstore_iterator_key(it, &rk, &nrk);
+  ASSERT("reverse iterator ok after re-encrypt", nrk > 0);
+  kvstore_iterator_close(it);
+
+  /* --- prefix iterator --- */
+  kvstore_put(db, "pfx:a", 5, "pa", 2);
+  kvstore_put(db, "pfx:b", 5, "pb", 2);
+  kvstore_prefix_iterator_create(db, "pfx:", 4, &it);
+  kvstore_iterator_first(it);
+  int pfxCount = 0;
+  while( !kvstore_iterator_eof(it) ){ pfxCount++; kvstore_iterator_next(it); }
+  kvstore_iterator_close(it);
+  ASSERT("prefix iterator ok after re-encrypt", pfxCount == 2);
+
+  /* --- seek --- */
+  kvstore_iterator_create(db, &it);
+  kvstore_iterator_seek(it, "k3", 2);
+  void *sk = NULL; int nsk = 0;
+  kvstore_iterator_key(it, &sk, &nsk);
+  ASSERT("seek ok after re-encrypt", nsk == 2 && memcmp(sk, "k3", 2) == 0);
+  kvstore_iterator_close(it);
+
+  /* --- TTL: key written before remove_encryption still readable --- */
+  int64_t remaining = 0;
+  rc = kvstore_get_ttl(db, "ttlkey", 6, &val, &nval, &remaining);
+  ASSERT("ttl get after re-encrypt ok", rc == KVSTORE_OK);
+  ASSERT("ttl value correct after re-encrypt", val && nval == 6 && memcmp(val, "ttlval", 6) == 0);
+  ASSERT("ttl remaining > 0 after re-encrypt", remaining > 0);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  /* --- TTL: new key --- */
+  int64_t expire2 = kvstore_now_ms() + 8000;
+  rc = kvstore_put_ttl(db, "newttl", 6, "nv", 2, expire2);
+  ASSERT("put_ttl after re-encrypt ok", rc == KVSTORE_OK);
+  rc = kvstore_get_ttl(db, "newttl", 6, &val, &nval, &remaining);
+  ASSERT("get_ttl new key after re-encrypt ok", rc == KVSTORE_OK);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  /* --- TTL: expired key --- */
+  kvstore_put_ttl(db, "expk", 4, "ev", 2, kvstore_now_ms() - 1);
+  rc = kvstore_get_ttl(db, "expk", 4, &val, &nval, &remaining);
+  ASSERT("expired key NOTFOUND after re-encrypt", rc == KVSTORE_NOTFOUND);
+
+  /* --- purge_expired --- */
+  kvstore_put_ttl(db, "p1", 2, "pv1", 3, kvstore_now_ms() - 100);
+  kvstore_put_ttl(db, "p2", 2, "pv2", 3, kvstore_now_ms() - 100);
+  int nDeleted = 0;
+  rc = kvstore_purge_expired(db, &nDeleted);
+  ASSERT("purge_expired after re-encrypt ok", rc == KVSTORE_OK);
+  ASSERT("purge_expired count >= 2 after re-encrypt", nDeleted >= 2);
+
+  /* --- count --- */
+  int64_t cnt = 0;
+  kvstore_count(db, &cnt);
+  ASSERT("count > 0 after re-encrypt", cnt > 0);
+
+  /* --- column family: data written before remove_encryption readable --- */
+  rc = kvstore_cf_open(db, "myCF", &cf);
+  ASSERT("cf reopen after re-encrypt ok", rc == KVSTORE_OK);
+  rc = kvstore_cf_get(cf, "cfk", 3, &val, &nval);
+  ASSERT("cf get after re-encrypt ok", rc == KVSTORE_OK);
+  ASSERT("cf value correct after re-encrypt", val && nval == 3 && memcmp(val, "cfv", 3) == 0);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  rc = kvstore_cf_put(cf, "cfk2", 4, "cfv2", 4);
+  ASSERT("cf put after re-encrypt ok", rc == KVSTORE_OK);
+  rc = kvstore_cf_get(cf, "cfk2", 4, &val, &nval);
+  ASSERT("cf get new key after re-encrypt ok", rc == KVSTORE_OK);
+  ASSERT("cf new value correct after re-encrypt", val && nval == 4 && memcmp(val, "cfv2", 4) == 0);
+  if( val ){ snkv_free(val); val = NULL; }
+  kvstore_cf_close(cf); cf = NULL;
+
+  /* --- put_if_absent --- */
+  int inserted = 0;
+  rc = kvstore_put_if_absent(db, "k1", 2, "new", 3, 0, &inserted);
+  ASSERT("put_if_absent existing key not inserted", inserted == 0);
+  rc = kvstore_get(db, "k1", 2, &val, &nval);
+  ASSERT("existing key unchanged", val && nval == 2 && memcmp(val, "v1", 2) == 0);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  rc = kvstore_put_if_absent(db, "brand_new", 9, "bv", 2, 0, &inserted);
+  ASSERT("put_if_absent new key inserted", inserted == 1);
+  rc = kvstore_get(db, "brand_new", 9, &val, &nval);
+  ASSERT("put_if_absent new key readable", rc == KVSTORE_OK);
+  if( val ){ snkv_free(val); val = NULL; }
+
+  /* --- old password fails, new password works --- */
+  kvstore_close(db); db = NULL;
+
+  rc = kvstore_open_encrypted(path, "first", 5, &db, NULL);
+  ASSERT("old password fails after re-encrypt", rc == KVSTORE_AUTH_FAILED);
+  if( db ){ kvstore_close(db); db = NULL; }
+
+  rc = kvstore_open_encrypted(path, "second", 6, &db, NULL);
+  ASSERT("new password works after re-encrypt", rc == KVSTORE_OK);
+  rc = kvstore_get(db, "k1", 2, &val, &nval);
+  ASSERT("k1 readable on final reopen", rc == KVSTORE_OK);
+  ASSERT("k1 value correct on final reopen", val && nval == 2 && memcmp(val, "v1", 2) == 0);
+  if( val ){ snkv_free(val); val = NULL; }
+  kvstore_close(db);
+
+  rmdb(path);
+}
+
 /* ---- Main ---- */
 int main(void){
   printf("=== SNKV Encryption Tests ===\n\n");
@@ -533,6 +1075,9 @@ int main(void){
   test_open_enc_on_plain();
   test_empty_value();
   test_plain_open_returns_garbage();
+  test_reencrypt_full_functionality();
+  test_remove_encryption_full_functionality();
+  test_remove_then_reencrypt_full_functionality();
 
   printf("\n=== Results: %d passed, %d failed ===\n", passed, failed);
   return failed > 0 ? 1 : 0;
