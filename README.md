@@ -201,7 +201,8 @@ make test
 Available on PyPI — no compiler needed:
 
 ```bash
-pip install snkv
+pip install snkv           # KV store, TTL, encryption, column families
+pip install snkv[vector]   # + HNSW vector search (usearch + numpy)
 ```
 
 ```python
@@ -210,6 +211,19 @@ from snkv import KVStore
 with KVStore("mydb.db") as db:
     db["hello"] = "world"
     print(db["hello"].decode())   # world
+```
+
+**Vector search** (Python only) — integrated HNSW approximate nearest-neighbour index backed by [usearch](https://github.com/unum-cloud/usearch). Vectors and KV data share the same `.db` file. Supports metadata filtering, exact rerank, TTL on vectors, quantization (f32/f16/i8), sidecar index persistence, and encryption.
+
+```python
+from snkv.vector import VectorStore
+import numpy as np
+
+with VectorStore("store.db", dim=128, space="cosine") as vs:
+    vs.vector_put(b"doc:1", b"hello world", np.random.rand(128).astype("f4"))
+    results = vs.search(np.random.rand(128).astype("f4"), top_k=5)
+    for r in results:
+        print(r.key, r.distance, r.value)
 ```
 
 Full documentation — installation, API reference, examples, and thread-safety notes — is in
@@ -333,7 +347,8 @@ If you want to benchmark SNKV against LMDB or RocksDB, the benchmark harnesses a
 - **Zero memory leaks** — verified with Valgrind
 - **SSD-friendly** — WAL appends sequentially, reducing random writes
 
-- **Python Bindings** — idiomatic Python 3.8+ API with dict-style access, TTL support, context managers, typed exceptions, and prefix iterators — see [python/README.md](python/README.md)
+- **Python Bindings** — idiomatic Python 3.8+ API with dict-style access, TTL, encryption, column families, iterators, and typed exceptions — see [python/README.md](python/README.md)
+- **Vector Search (Python)** — integrated HNSW index via `pip install snkv[vector]`; metadata filtering, exact rerank, TTL on vectors, quantization (f32/f16/i8), sidecar persistence — see [python/README.md#vector-search](python/README.md#vector-search)
 
 ---
 
