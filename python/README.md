@@ -517,6 +517,12 @@ results = vs.search(query_vec, top_k=10, rerank=True)             # exact rerank
 results = vs.search(query_vec, top_k=10, max_distance=0.5)        # distance cutoff
 pairs   = vs.search_keys(query_vec, top_k=10)                     # keys + distances only
 
+# SearchResult fields: key, value, distance, metadata
+# NOTE: result.metadata is None unless filter= is passed to search().
+# To access metadata without filtering, call get_metadata(key) after the search:
+for r in results:
+    meta = vs.get_metadata(r.key)   # dict or None — always works
+
 # Read
 vec  = vs.vector_get(b"key")          # np.ndarray(dim,) float32
 val  = vs.get(b"key")                 # value bytes from KV store

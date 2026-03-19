@@ -2079,16 +2079,21 @@ meta = vs.<span class="fn">get_metadata</span>(<span class="str">b"doc:2"</span>
             <tr><td><code>oversample</code></td><td><code>int ≥ 1</code> — candidate pool = <code>top_k × oversample</code> when filter or rerank is active (default 3).</td></tr>
             <tr><td><code>max_distance</code></td><td><code>float</code> or <code>None</code> — drop results with distance &gt; threshold, applied last after rerank.</td></tr>
           </table></div>
-          <p class="fn-desc" style="margin-top:0.5rem;"><code>SearchResult</code> fields: <code>key: bytes</code>, <code>value: bytes</code>, <code>distance: float</code>, <code>metadata: dict | None</code> (populated only when <code>filter</code> is provided).</p>
+          <p class="fn-desc" style="margin-top:0.5rem;"><code>SearchResult</code> fields: <code>key: bytes</code>, <code>value: bytes</code>, <code>distance: float</code>, <code>metadata: dict | None</code>.</p>
+          <p class="fn-desc" style="margin-top:0.25rem;"><strong>Important:</strong> <code>result.metadata</code> is <code>None</code> unless a <code>filter</code> argument is provided. This is intentional — metadata loading is skipped when no filtering is needed to avoid the per-candidate CF read cost. To read metadata without filtering, use <code>get_metadata(key)</code> after the search.</p>
           <pre>q = np.random.rand(<span class="num">128</span>).astype(<span class="str">"f4"</span>)
 
-<span class="cm"># Basic ANN search</span>
+<span class="cm"># Basic ANN search — result.metadata is None here</span>
 results = vs.<span class="fn">search</span>(q, top_k=<span class="num">5</span>)
 <span class="kw">for</span> r <span class="kw">in</span> results:
     print(r.key, r.distance, r.value)
+    <span class="cm"># r.metadata is None — use get_metadata() if you need it</span>
+    meta = vs.<span class="fn">get_metadata</span>(r.key)  <span class="cm"># dict or None</span>
 
-<span class="cm"># With metadata filter</span>
+<span class="cm"># With metadata filter — result.metadata IS populated</span>
 results = vs.<span class="fn">search</span>(q, top_k=<span class="num">5</span>, filter={<span class="str">"category"</span>: <span class="str">"news"</span>})
+<span class="kw">for</span> r <span class="kw">in</span> results:
+    print(r.metadata)  <span class="cm"># {"category": "news", ...}</span>
 
 <span class="cm"># Exact rerank + distance cutoff</span>
 results = vs.<span class="fn">search</span>(q, top_k=<span class="num">5</span>, rerank=<span class="kw">True</span>, max_distance=<span class="num">0.5</span>)</pre>
