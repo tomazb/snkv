@@ -24,7 +24,7 @@ A simple, crash-safe embedded key-value store
 
 ## What is SNKV?
 
-**SNKV** is a lightweight, **ACID-compliant embedded key-value store** built directly on SQLite's B-Tree storage engine — without SQL.
+**SNKV** is a lightweight, **ACID-compliant embedded key-value store** built directly on SQLite's storage engine — without SQL layer.
 
 The idea: bypass the SQL layer entirely and talk directly to SQLite's storage engine. No SQL parser. No query planner. No virtual machine. Just a clean KV API on top of a proven, battle-tested storage core.
 
