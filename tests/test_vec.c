@@ -792,6 +792,20 @@ static void test_null_safety(void) {
 
     kvstore_vec_free_key_results(NULL, 0);
     ASSERT(1, "free_key_results(NULL) safe");
+
+    /* NULL pVec → KVVEC_BAD_VECTOR */
+    KVVecStore *vs = NULL;
+    ASSERT_OK(kvstore_vec_open(DB, DIM, KVVEC_SPACE_L2,
+                               0, 0, 0, KVVEC_DTYPE_F32, NULL, 0, &vs), "open for null vec test");
+    int rc = kvstore_vec_put(vs, "k", 1, "v", 1, NULL, 0, NULL, 0);
+    ASSERT_EQ(rc, KVVEC_BAD_VECTOR, "NULL pVec → BAD_VECTOR");
+
+    KVVecItem items[1] = {{ "k", 1, "v", 1, NULL, NULL, 0 }};
+    int rc2 = kvstore_vec_put_batch(vs, items, 1, 0);
+    ASSERT_EQ(rc2, KVVEC_BAD_VECTOR, "NULL item.pVec → BAD_VECTOR");
+
+    kvstore_vec_close(vs);
+    rm_db();
 }
 
 /* -----------------------------------------------------------------------
