@@ -58,6 +58,10 @@ jobs:
       shell: msys2 {0}
       run: make test
 
+    - name: Run vector tests
+      if: runner.os != 'Windows'
+      run: make test-vector
+
     - name: Clean
       if: always() && runner.os != 'Windows'
       run: make clean
@@ -110,7 +114,9 @@ jobs:
         sudo apt-get install -y build-essential valgrind jq bc
 
     - name: Build (debug mode)
-      run: make BUILD=debug tests
+      run: |
+        make BUILD=debug tests
+        make test-vector
 
     # ---- Run all tests under Valgrind ----
     - name: Valgrind memory leak check

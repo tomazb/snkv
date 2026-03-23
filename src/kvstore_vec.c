@@ -610,7 +610,10 @@ int kvstore_vec_put(
     if (pMeta && nMeta > 0) {
         KVColumnFamily *pTmp = NULL;
         int rc2 = getTagsCF(pVS, &pTmp);
-        if (rc2 != KVSTORE_OK) return rc2;
+        if (rc2 != KVSTORE_OK) {
+            sqlite3_mutex_leave(pVS->pMutex);
+            return rc2;
+        }
     }
 
     int64_t newLabel = pVS->nextId;
@@ -618,7 +621,7 @@ int kvstore_vec_put(
 
     /* Begin atomic write transaction */
     int rc = kvstore_begin(pVS->pKV, 1);
-    if (rc != KVSTORE_OK) return rc;
+    if (rc != KVSTORE_OK) { sqlite3_mutex_leave(pVS->pMutex); return rc; }
 
     /* Write value (with or without TTL) */
     if (expire_ms > 0) {
