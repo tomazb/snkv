@@ -174,6 +174,7 @@ kvstore_vec_close(vs);
 - **Sidecar persistence** — `close` saves the HNSW graph to `{path}.usearch`; `open` loads it in O(1) instead of an O(n·dim) rebuild (disabled for encrypted stores)
 - **Encryption** — pass a password to `kvstore_vec_open`; values and vectors are encrypted, sidecar is disabled
 - **Batch inserts** — `kvstore_vec_put_batch` writes N items in one atomic transaction
+- **Can be cross compiled for Android devices** - snkv is embedded database with vector support which has all required features so it can be cross compiled for Android platforms
 
 ### Build
 
