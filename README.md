@@ -175,7 +175,6 @@ kvstore_vec_close(vs);
 - **Sidecar persistence** — `close` saves the HNSW graph to `{path}.usearch`; `open` loads it in O(1) instead of an O(n·dim) rebuild (disabled for encrypted stores)
 - **Encryption** — pass a password to `kvstore_vec_open`; values and vectors are encrypted, sidecar is disabled
 - **Batch inserts** — `kvstore_vec_put_batch` writes N items in one atomic transaction
-- **Can be cross compiled for Android devices** - snkv is embedded database with vector support which has all required features so it can be cross compiled for Android platforms
 
 ### Build
 
@@ -422,10 +421,10 @@ If you want to benchmark SNKV against LMDB or RocksDB, the benchmark harnesses a
 - **Single-header** — drop `snkv.h` into any C/C++ project
 - **Zero memory leaks** — verified with Valgrind
 - **SSD-friendly** — WAL appends sequentially, reducing random writes
-
 - **Python Bindings** — idiomatic Python 3.8+ API with dict-style access, TTL, encryption, column families, iterators, and typed exceptions — see [python/README.md](python/README.md)
 - **Vector Search (C)** — native HNSW index via `make vector`; ANN search, exact rerank, TTL, sidecar persistence, encryption, batch insert — see [examples/vector.c](examples/vector.c)
 - **Vector Search (Python)** — `pip install snkv[vector]`; metadata filtering, exact rerank, TTL on vectors, quantization (f32/f16/i8), sidecar persistence — see [python/README.md#vector-search](python/README.md#vector-search)
+- **Can be cross compiled for Android devices** - snkv is embedded database with vector support which has all required features so it can be cross compiled for Android platforms
 
 ---
 
