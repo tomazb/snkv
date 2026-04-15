@@ -425,6 +425,7 @@ If you want to benchmark SNKV against LMDB or RocksDB, the benchmark harnesses a
 - **Vector Search (C)** — native HNSW index via `make vector`; ANN search, exact rerank, TTL, sidecar persistence, encryption, batch insert — see [examples/vector.c](examples/vector.c)
 - **Vector Search (Python)** — `pip install snkv[vector]`; metadata filtering, exact rerank, TTL on vectors, quantization (f32/f16/i8), sidecar persistence — see [python/README.md#vector-search](python/README.md#vector-search)
 - **Can be cross compiled for Android devices** - snkv is embedded database with vector support which has all required features so it can be cross compiled for Android platforms
+- **Ideal for AI workloads** - SNKV built solely on top of battle tested b-tree engine of sqlite, additionally by default read transaction is enabled, so read operations are faster as well as since it bypass sql layer it removed overhead of row metadata write operations and directly write data to b-tree, Which improves 1.5x speed improvement in mixed workloads.
 
 ---
 
