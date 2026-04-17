@@ -79,7 +79,7 @@ TEST_SRC = tests/test_prod.c tests/test_columnfamily.c tests/test_benchmark.c \
 TEST_BIN = $(TEST_SRC:.c=$(TARGET_EXT))
 
 # ---- Example files ----
-EXAMPLE_SRC = $(wildcard examples/*.c)
+EXAMPLE_SRC = $(filter-out examples/vector.c,$(wildcard examples/*.c))
 EXAMPLE_BIN = $(EXAMPLE_SRC:.c=$(TARGET_EXT))
 
 all: $(LIB)
@@ -109,9 +109,13 @@ run-examples: examples
 	done
 
 # ---- Vector example (requires g++ runtime — built separately from snkv.h examples) ----
+VEC_OBJ         = src/kvstore_vec.o src/usearch/usearch_impl.o
+VLIB            = libsnkv_vec.a
 VEC_EXAMPLE_BIN = examples/vector$(TARGET_EXT)
 
 vector-examples: $(VLIB) $(VEC_EXAMPLE_BIN)
+	@echo "=== Running $(VEC_EXAMPLE_BIN) ==="; \
+	./$(VEC_EXAMPLE_BIN) || exit 1
 
 examples/vector.o: examples/vector.c
 	$(CC) $(VEC_CFLAGS) -c -o $@ $<
@@ -156,12 +160,6 @@ ifeq ($(BUILD),release)
                  -Iinclude -Isrc -Isrc/usearch -Isrc/usearch/include \
                  -DUSEARCH_USE_FP16LIB=0
 endif
-
-# Vector object files (built separately from core LIB_OBJ)
-VEC_OBJ = src/kvstore_vec.o src/usearch/usearch_impl.o
-
-# Combined static library: core + vector
-VLIB = libsnkv_vec.a
 
 # Vector test binary
 VEC_TEST_BIN = tests/test_vec$(TARGET_EXT)
